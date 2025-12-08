@@ -2059,7 +2059,7 @@ impl ChatWidget {
     }
 
     fn lower_cost_preset(&self) -> Option<ModelPreset> {
-        let models = self.models_manager.available_models.try_read().ok()?;
+        let models = self.models_manager.try_list_models().ok()?;
         models
             .iter()
             .find(|preset| preset.model == NUDGE_MODEL_SLUG)
@@ -2176,14 +2176,16 @@ impl ChatWidget {
         let current_model = self.config.model.clone();
         let presets: Vec<ModelPreset> =
             // todo(aibrahim): make this async function
-            if let Ok(models) = self.models_manager.available_models.try_read() {
-                models.clone()
-            } else {
-                self.add_info_message(
-                    "Models are being updated; please try /model again in a moment.".to_string(),
-                    None,
-                );
-                return;
+            match self.models_manager.try_list_models() {
+                Ok(models) => models,
+                Err(_) => {
+                    self.add_info_message(
+                        "Models are being updated; please try /model again in a moment."
+                            .to_string(),
+                        None,
+                    );
+                    return;
+                }
             };
 
         let mut items: Vec<SelectionItem> = Vec::new();
