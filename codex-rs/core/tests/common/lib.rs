@@ -27,14 +27,23 @@ pub fn assert_regex_match<'s>(pattern: &str, actual: &'s str) -> regex_lite::Cap
 
 /// Returns a default `Config` whose on-disk state is confined to the provided
 /// temporary directory. Using a per-test directory keeps tests hermetic and
-/// avoids clobbering a developer’s real `~/.codex`.
+/// avoids clobbering a developer's real `~/.codex`.
 pub fn load_default_config_for_test(codex_home: &TempDir) -> Config {
-    Config::load_from_base_config_with_overrides(
+    // Disable AnyCLI mode during tests to ensure consistent behavior
+    // SAFETY: Tests should not run in parallel when modifying env vars
+    unsafe {
+        std::env::set_var("ANYCLI_MODE", "0");
+    }
+    let config = Config::load_from_base_config_with_overrides(
         ConfigToml::default(),
         default_test_overrides(),
         codex_home.path().to_path_buf(),
     )
-    .expect("defaults for test should always succeed")
+    .expect("defaults for test should always succeed");
+    unsafe {
+        std::env::remove_var("ANYCLI_MODE");
+    }
+    config
 }
 
 #[cfg(target_os = "linux")]

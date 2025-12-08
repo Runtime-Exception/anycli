@@ -399,6 +399,7 @@ async fn run_ratatui_app(
             OnboardingScreenArgs {
                 show_login_screen: should_show_login_screen(login_status, &initial_config),
                 show_trust_screen: should_show_trust_screen,
+                show_config_setup_screen: should_show_config_setup_screen(),
                 login_status,
                 auth_manager: auth_manager.clone(),
                 config: initial_config.clone(),
@@ -603,6 +604,23 @@ fn should_show_login_screen(login_status: LoginStatus, config: &Config) -> bool 
     }
 
     login_status == LoginStatus::NotAuthenticated
+}
+
+/// Check if we should show the AnyCLI config setup screen.
+/// Returns true if AnyCLI mode is enabled but no configuration exists.
+fn should_show_config_setup_screen() -> bool {
+    use codex_core::anycli;
+
+    // Only show if AnyCLI mode is enabled
+    if !anycli::is_anycli_mode() {
+        return false;
+    }
+
+    // Show if no config exists or if config is empty
+    match anycli::config::AnycliConfig::load() {
+        Ok(config) => config.configs.is_empty(),
+        Err(_) => true, // Config doesn't exist or is invalid, need setup
+    }
 }
 
 #[cfg(test)]

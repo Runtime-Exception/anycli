@@ -48,7 +48,7 @@ impl<T: HttpTransport, A: AuthProvider> ModelsClient<T, A> {
             let separator = if req.url.contains('?') { '&' } else { '?' };
             req.url = format!("{}{}client_version={client_version}", req.url, separator);
 
-            add_auth_headers(&self.auth, req)
+            add_auth_headers(&self.auth, req, &self.provider.wire)
         };
 
         let resp = run_with_request_telemetry(

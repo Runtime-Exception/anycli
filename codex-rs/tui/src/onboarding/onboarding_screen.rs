@@ -17,6 +17,7 @@ use codex_protocol::config_types::ForcedLoginMethod;
 use crate::LoginStatus;
 use crate::onboarding::auth::AuthModeWidget;
 use crate::onboarding::auth::SignInState;
+use crate::onboarding::config_setup::ConfigSetupWidget;
 use crate::onboarding::trust_directory::TrustDirectorySelection;
 use crate::onboarding::trust_directory::TrustDirectoryWidget;
 use crate::onboarding::welcome::WelcomeWidget;
@@ -31,6 +32,7 @@ use std::sync::RwLock;
 enum Step {
     Welcome(WelcomeWidget),
     Auth(AuthModeWidget),
+    ConfigSetup(ConfigSetupWidget),
     TrustDirectory(TrustDirectoryWidget),
 }
 
@@ -60,6 +62,7 @@ pub(crate) struct OnboardingScreen {
 pub(crate) struct OnboardingScreenArgs {
     pub show_trust_screen: bool,
     pub show_login_screen: bool,
+    pub show_config_setup_screen: bool,
     pub login_status: LoginStatus,
     pub auth_manager: Arc<AuthManager>,
     pub config: Config,
@@ -75,6 +78,7 @@ impl OnboardingScreen {
         let OnboardingScreenArgs {
             show_trust_screen,
             show_login_screen,
+            show_config_setup_screen,
             login_status,
             auth_manager,
             config,
@@ -108,6 +112,12 @@ impl OnboardingScreen {
                 forced_login_method,
                 animations_enabled: config.animations,
             }))
+        }
+        // AnyCLI config setup step (shown when AnyCLI mode is enabled but no config exists)
+        if show_config_setup_screen {
+            steps.push(Step::ConfigSetup(ConfigSetupWidget::new(
+                tui.frame_requester(),
+            )));
         }
         let is_git_repo = get_git_repo_root(&cwd).is_some();
         let highlighted = if is_git_repo {
@@ -320,6 +330,7 @@ impl KeyboardHandler for Step {
         match self {
             Step::Welcome(widget) => widget.handle_key_event(key_event),
             Step::Auth(widget) => widget.handle_key_event(key_event),
+            Step::ConfigSetup(widget) => widget.handle_key_event(key_event),
             Step::TrustDirectory(widget) => widget.handle_key_event(key_event),
         }
     }
@@ -328,6 +339,7 @@ impl KeyboardHandler for Step {
         match self {
             Step::Welcome(_) => {}
             Step::Auth(widget) => widget.handle_paste(pasted),
+            Step::ConfigSetup(widget) => widget.handle_paste(pasted),
             Step::TrustDirectory(widget) => widget.handle_paste(pasted),
         }
     }
@@ -338,6 +350,7 @@ impl StepStateProvider for Step {
         match self {
             Step::Welcome(w) => w.get_step_state(),
             Step::Auth(w) => w.get_step_state(),
+            Step::ConfigSetup(w) => w.get_step_state(),
             Step::TrustDirectory(w) => w.get_step_state(),
         }
     }
@@ -350,6 +363,9 @@ impl WidgetRef for Step {
                 widget.render_ref(area, buf);
             }
             Step::Auth(widget) => {
+                widget.render_ref(area, buf);
+            }
+            Step::ConfigSetup(widget) => {
                 widget.render_ref(area, buf);
             }
             Step::TrustDirectory(widget) => {

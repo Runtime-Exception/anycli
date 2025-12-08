@@ -42,6 +42,12 @@ pub enum WireApi {
     /// Regular Chat Completions compatible with `/v1/chat/completions`.
     #[default]
     Chat,
+
+    /// Anthropic Messages API at `/v1/messages`.
+    Anthropic,
+
+    /// Google Gemini API at `/v1beta/models/{model}:streamGenerateContent`.
+    Gemini,
 }
 
 /// Serializable representation of a provider definition.
@@ -155,6 +161,8 @@ impl ModelProviderInfo {
             wire: match self.wire_api {
                 WireApi::Responses => ApiWireApi::Responses,
                 WireApi::Chat => ApiWireApi::Chat,
+                WireApi::Anthropic => ApiWireApi::Anthropic,
+                WireApi::Gemini => ApiWireApi::Gemini,
             },
             headers,
             retry,
@@ -165,24 +173,57 @@ impl ModelProviderInfo {
     /// If `env_key` is Some, returns the API key for this provider if present
     /// (and non-empty) in the environment. If `env_key` is required but
     /// cannot be found, returns an error.
+    ///
+    /// Supports the `file:` prefix to read API keys from files, e.g.,
+    /// `file:/path/to/api.key` will read the key from that file.
     pub fn api_key(&self) -> crate::error::Result<Option<String>> {
         match &self.env_key {
             Some(env_key) => {
-                let env_value = std::env::var(env_key);
-                env_value
-                    .and_then(|v| {
-                        if v.trim().is_empty() {
-                            Err(VarError::NotPresent)
-                        } else {
-                            Ok(Some(v))
+                // Check if this is a file-based key
+                if let Some(file_path) = env_key.strip_prefix("file:") {
+                    // Read API key from file
+                    let path = std::path::Path::new(file_path);
+                    match std::fs::read_to_string(path) {
+                        Ok(content) => {
+                            let trimmed = content.trim();
+                            if trimmed.is_empty() {
+                                Err(crate::error::CodexErr::EnvVar(EnvVarError {
+                                    var: env_key.clone(),
+                                    instructions: Some(format!(
+                                        "File exists but is empty: {}",
+                                        file_path
+                                    )),
+                                }))
+                            } else {
+                                Ok(Some(trimmed.to_string()))
+                            }
                         }
-                    })
-                    .map_err(|_| {
-                        crate::error::CodexErr::EnvVar(EnvVarError {
+                        Err(e) => Err(crate::error::CodexErr::EnvVar(EnvVarError {
                             var: env_key.clone(),
-                            instructions: self.env_key_instructions.clone(),
+                            instructions: Some(format!(
+                                "Failed to read API key from file '{}': {}",
+                                file_path, e
+                            )),
+                        })),
+                    }
+                } else {
+                    // Standard environment variable lookup
+                    let env_value = std::env::var(env_key);
+                    env_value
+                        .and_then(|v| {
+                            if v.trim().is_empty() {
+                                Err(VarError::NotPresent)
+                            } else {
+                                Ok(Some(v))
+                            }
                         })
-                    })
+                        .map_err(|_| {
+                            crate::error::CodexErr::EnvVar(EnvVarError {
+                                var: env_key.clone(),
+                                instructions: self.env_key_instructions.clone(),
+                            })
+                        })
+                }
             }
             None => Ok(None),
         }

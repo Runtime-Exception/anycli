@@ -3,9 +3,13 @@ use std::sync::Arc;
 use crate::api_bridge::auth_provider_from_auth;
 use crate::api_bridge::map_api_error;
 use codex_api::AggregateStreamExt;
+use codex_api::AnthropicClient as ApiAnthropicClient;
+use codex_api::AnthropicOptions as ApiAnthropicOptions;
 use codex_api::ChatClient as ApiChatClient;
 use codex_api::CompactClient as ApiCompactClient;
 use codex_api::CompactionInput as ApiCompactionInput;
+use codex_api::GeminiClient as ApiGeminiClient;
+use codex_api::GeminiOptions as ApiGeminiOptions;
 use codex_api::Prompt as ApiPrompt;
 use codex_api::RequestTelemetry;
 use codex_api::ReqwestTransport;
@@ -139,6 +143,8 @@ impl ModelClient {
                     ))
                 }
             }
+            WireApi::Anthropic => self.stream_anthropic_api(prompt).await,
+            WireApi::Gemini => self.stream_gemini_api(prompt).await,
         }
     }
 
@@ -266,6 +272,110 @@ impl ModelClient {
                 store_override: None,
                 conversation_id: Some(conversation_id.clone()),
                 session_source: Some(session_source.clone()),
+            };
+
+            let stream_result = client
+                .stream_prompt(&self.config.model, &api_prompt, options)
+                .await;
+
+            match stream_result {
+                Ok(stream) => {
+                    return Ok(map_response_stream(stream, self.otel_event_manager.clone()));
+                }
+                Err(ApiError::Transport(TransportError::Http { status, .. }))
+                    if status == StatusCode::UNAUTHORIZED =>
+                {
+                    handle_unauthorized(status, &mut refreshed, &auth_manager, &auth).await?;
+                    continue;
+                }
+                Err(err) => return Err(map_api_error(err)),
+            }
+        }
+    }
+
+    /// Streams a turn via the Anthropic Messages API.
+    async fn stream_anthropic_api(&self, prompt: &Prompt) -> Result<ResponseStream> {
+        let auth_manager = self.auth_manager.clone();
+        let model_family = self.get_model_family();
+        let instructions = prompt.get_full_instructions(&model_family).into_owned();
+        let tools_json = create_tools_json_for_chat_completions_api(&prompt.tools)?;
+        let api_prompt = build_api_prompt(prompt, instructions, tools_json);
+
+        let mut refreshed = false;
+        loop {
+            let auth = auth_manager.as_ref().and_then(|m| m.auth());
+            let api_provider = self
+                .provider
+                .to_api_provider(auth.as_ref().map(|a| a.mode))?;
+            let api_auth = auth_provider_from_auth(auth.clone(), &self.provider).await?;
+            let transport = ReqwestTransport::new(build_reqwest_client());
+            let (request_telemetry, sse_telemetry) = self.build_streaming_telemetry();
+            let client = ApiAnthropicClient::new(transport, api_provider, api_auth)
+                .with_telemetry(Some(request_telemetry), Some(sse_telemetry));
+
+            let options = ApiAnthropicOptions {
+                max_tokens: Some(8192),
+                thinking_enabled: model_family.supports_reasoning_summaries,
+                thinking_budget: None,
+            };
+
+            let stream_result = client
+                .stream_prompt(&self.config.model, &api_prompt, options)
+                .await;
+
+            match stream_result {
+                Ok(stream) => {
+                    return Ok(map_response_stream(stream, self.otel_event_manager.clone()));
+                }
+                Err(ApiError::Transport(TransportError::Http { status, .. }))
+                    if status == StatusCode::UNAUTHORIZED =>
+                {
+                    handle_unauthorized(status, &mut refreshed, &auth_manager, &auth).await?;
+                    continue;
+                }
+                Err(err) => return Err(map_api_error(err)),
+            }
+        }
+    }
+
+    /// Streams a turn via the Google Gemini API.
+    async fn stream_gemini_api(&self, prompt: &Prompt) -> Result<ResponseStream> {
+        let auth_manager = self.auth_manager.clone();
+        let model_family = self.get_model_family();
+        let instructions = prompt.get_full_instructions(&model_family).into_owned();
+        let tools_json = create_tools_json_for_chat_completions_api(&prompt.tools)?;
+        let api_prompt = build_api_prompt(prompt, instructions, tools_json);
+
+        // Determine thinking level from config or model family
+        let thinking_level = if model_family.supports_reasoning_summaries {
+            self.effort
+                .map(|e| match e {
+                    ReasoningEffortConfig::None | ReasoningEffortConfig::Minimal => None,
+                    ReasoningEffortConfig::Low => Some("low".to_string()),
+                    ReasoningEffortConfig::Medium => Some("medium".to_string()),
+                    ReasoningEffortConfig::High | ReasoningEffortConfig::XHigh => {
+                        Some("high".to_string())
+                    }
+                })
+                .flatten()
+        } else {
+            None
+        };
+
+        let mut refreshed = false;
+        loop {
+            let auth = auth_manager.as_ref().and_then(|m| m.auth());
+            let api_provider = self
+                .provider
+                .to_api_provider(auth.as_ref().map(|a| a.mode))?;
+            let api_auth = auth_provider_from_auth(auth.clone(), &self.provider).await?;
+            let transport = ReqwestTransport::new(build_reqwest_client());
+            let (request_telemetry, sse_telemetry) = self.build_streaming_telemetry();
+            let client = ApiGeminiClient::new(transport, api_provider, api_auth)
+                .with_telemetry(Some(request_telemetry), Some(sse_telemetry));
+
+            let options = ApiGeminiOptions {
+                thinking_level: thinking_level.clone(),
             };
 
             let stream_result = client

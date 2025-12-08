@@ -13,6 +13,8 @@ pub enum SlashCommand {
     // DO NOT ALPHA-SORT! Enum order is presentation order in the popup, so
     // more frequently used commands should be listed first.
     Model,
+    Switch,
+    Config,
     Approvals,
     Skills,
     Review,
@@ -50,6 +52,8 @@ impl SlashCommand {
             SlashCommand::Skills => "use skills to improve how Codex performs specific tasks",
             SlashCommand::Status => "show current session configuration and token usage",
             SlashCommand::Model => "choose what model and reasoning effort to use",
+            SlashCommand::Switch => "switch between provider configurations",
+            SlashCommand::Config => "add a new provider configuration",
             SlashCommand::Approvals => "choose what Codex can do without approval",
             SlashCommand::Mcp => "list configured MCP tools",
             SlashCommand::Logout => "log out of Codex",
@@ -73,6 +77,8 @@ impl SlashCommand {
             | SlashCommand::Compact
             | SlashCommand::Undo
             | SlashCommand::Model
+            | SlashCommand::Switch
+            | SlashCommand::Config
             | SlashCommand::Approvals
             | SlashCommand::Review
             | SlashCommand::Logout => false,

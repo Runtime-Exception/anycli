@@ -34,6 +34,8 @@ pub(crate) use list_selection_view::SelectionViewParams;
 mod feedback_view;
 pub(crate) use feedback_view::feedback_selection_params;
 pub(crate) use feedback_view::feedback_upload_consent_params;
+mod config_input_view;
+pub(crate) use config_input_view::ConfigInputView;
 mod paste_burst;
 pub mod popup_consts;
 mod queued_user_messages;

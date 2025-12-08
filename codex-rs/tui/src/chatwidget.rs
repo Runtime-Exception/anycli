@@ -1540,6 +1540,12 @@ impl ChatWidget {
             SlashCommand::Model => {
                 self.open_model_popup();
             }
+            SlashCommand::Switch => {
+                self.open_switch_popup();
+            }
+            SlashCommand::Config => {
+                self.open_config_add_popup();
+            }
             SlashCommand::Approvals => {
                 self.open_approvals_popup();
             }
@@ -2159,6 +2165,14 @@ impl ChatWidget {
     /// Open a popup to choose the model (stage 1). After selecting a model,
     /// a second popup is shown to choose the reasoning effort.
     pub(crate) fn open_model_popup(&mut self) {
+        use codex_core::anycli;
+
+        // Check if AnyCLI mode is enabled and use provider-specific models
+        if anycli::is_anycli_mode() {
+            self.open_anycli_model_popup();
+            return;
+        }
+
         let current_model = self.config.model.clone();
         let presets: Vec<ModelPreset> =
             // todo(aibrahim): make this async function
@@ -2205,6 +2219,297 @@ impl ChatWidget {
                     .to_string(),
             ),
             footer_hint: Some("Press enter to select reasoning effort, or esc to dismiss.".into()),
+            items,
+            ..Default::default()
+        });
+    }
+
+    /// Open a model popup for AnyCLI mode with provider-specific models.
+    fn open_anycli_model_popup(&mut self) {
+        use codex_core::anycli;
+        use codex_core::anycli::config::ProviderType;
+        use codex_core::anycli::models::models_for_provider;
+
+        // Load AnyCLI config to get the active provider
+        let config = match anycli::config::AnycliConfig::load() {
+            Ok(c) => c,
+            Err(e) => {
+                self.add_info_message(format!("Failed to load AnyCLI config: {}", e), None);
+                return;
+            }
+        };
+
+        let active_entry = match config.configs.get(&config.active_config) {
+            Some(e) => e.clone(),
+            None => {
+                self.add_info_message(
+                    format!("Active config '{}' not found", config.active_config),
+                    None,
+                );
+                return;
+            }
+        };
+
+        let provider = active_entry.provider_type.clone();
+        let models = models_for_provider(provider.clone());
+
+        // For NewAPI provider, show a message that models need to be manually configured
+        if matches!(provider, ProviderType::NewAPI) && models.is_empty() {
+            self.add_info_message(
+                "New-API provider requires manual model configuration in ~/.anycli/config.toml"
+                    .to_string(),
+                None,
+            );
+            return;
+        }
+
+        let current_model = self.config.model.clone();
+        let provider_name = match provider {
+            ProviderType::OpenAI => "OpenAI",
+            ProviderType::Anthropic => "Anthropic",
+            ProviderType::Google => "Google Gemini",
+            ProviderType::NewAPI => "New-API",
+        };
+
+        let mut items: Vec<SelectionItem> = Vec::new();
+        for model_info in models.into_iter() {
+            let is_current = model_info.id == current_model;
+            let model_id = model_info.id.to_string();
+            let actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
+                tx.send(AppEvent::UpdateModel(model_id.clone()));
+                tx.send(AppEvent::PersistModelSelection {
+                    model: model_id.clone(),
+                    effort: None,
+                });
+            })];
+            items.push(SelectionItem {
+                name: model_info.name.to_string(),
+                description: Some(model_info.description.to_string()),
+                is_current,
+                actions,
+                dismiss_on_select: true,
+                ..Default::default()
+            });
+        }
+
+        self.bottom_pane.show_selection_view(SelectionViewParams {
+            title: Some(format!("Select {} Model", provider_name)),
+            subtitle: Some(format!(
+                "Current config: {} | Use /switch to change provider",
+                config.active_config
+            )),
+            footer_hint: Some("Press enter to select, or esc to dismiss.".into()),
+            items,
+            ..Default::default()
+        });
+    }
+
+    /// Open a popup to switch between AnyCLI provider configurations.
+    pub(crate) fn open_switch_popup(&mut self) {
+        use codex_core::anycli;
+
+        // Check if AnyCLI mode is enabled
+        if !anycli::is_anycli_mode() {
+            self.add_info_message(
+                "AnyCLI mode is not enabled. Create ~/.anycli/config.toml to enable multi-provider support.".to_string(),
+                None,
+            );
+            return;
+        }
+
+        // Load AnyCLI config
+        let config = match anycli::config::AnycliConfig::load() {
+            Ok(c) => c,
+            Err(e) => {
+                self.add_info_message(format!("Failed to load AnyCLI config: {}", e), None);
+                return;
+            }
+        };
+
+        let active_config = config.active_config.clone();
+        let mut items: Vec<SelectionItem> = Vec::new();
+
+        for (name, entry) in config.configs.iter() {
+            if !entry.enabled {
+                continue;
+            }
+
+            let provider_name = match entry.provider_type {
+                anycli::config::ProviderType::OpenAI => "OpenAI",
+                anycli::config::ProviderType::Anthropic => "Anthropic",
+                anycli::config::ProviderType::Google => "Google",
+                anycli::config::ProviderType::NewAPI => "New-API",
+            };
+
+            let description = Some(format!("{} - {}", provider_name, entry.model));
+            let is_current = name == &active_config;
+            let config_name = name.clone();
+
+            let actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
+                tx.send(AppEvent::SwitchAnycliConfig {
+                    config_name: config_name.clone(),
+                });
+            })];
+
+            items.push(SelectionItem {
+                name: name.clone(),
+                description,
+                is_current,
+                actions,
+                dismiss_on_select: true,
+                ..Default::default()
+            });
+        }
+
+        if items.is_empty() {
+            self.add_info_message(
+                "No AnyCLI configurations found. Edit ~/.anycli/config.toml to add providers."
+                    .to_string(),
+                None,
+            );
+            return;
+        }
+
+        self.bottom_pane.show_selection_view(SelectionViewParams {
+            title: Some("Switch Provider Configuration".to_string()),
+            subtitle: Some("Select a provider configuration to use".to_string()),
+            footer_hint: Some("Press enter to switch, or esc to dismiss.".into()),
+            items,
+            ..Default::default()
+        });
+    }
+
+    /// Open a popup to add a new AnyCLI provider configuration.
+    /// Step 1: Select the provider type, then show text input for API key/endpoint.
+    pub(crate) fn open_config_add_popup(&mut self) {
+        use codex_core::anycli::config::ProviderType;
+
+        let providers = vec![
+            (
+                ProviderType::OpenAI,
+                "OpenAI",
+                "GPT models with ChatGPT login or API key",
+            ),
+            (ProviderType::Anthropic, "Anthropic", "Claude models"),
+            (
+                ProviderType::Google,
+                "Google Gemini",
+                "Gemini models with thinking",
+            ),
+            (
+                ProviderType::NewAPI,
+                "New-API",
+                "Custom endpoint (Anthropic-compatible)",
+            ),
+        ];
+
+        let mut items: Vec<SelectionItem> = Vec::new();
+        for (provider_type, name, description) in providers {
+            let provider_clone = provider_type.clone();
+            // After selecting provider, show text input for API key/endpoint
+            let actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
+                tx.send(AppEvent::OpenConfigModelSelect {
+                    provider: provider_clone.clone(),
+                });
+            })];
+            items.push(SelectionItem {
+                name: name.to_string(),
+                description: Some(description.to_string()),
+                is_current: false,
+                actions,
+                dismiss_on_select: true,
+                ..Default::default()
+            });
+        }
+
+        self.bottom_pane.show_selection_view(SelectionViewParams {
+            title: Some("Add Provider Configuration".to_string()),
+            subtitle: Some("Step 1: Select the provider type".to_string()),
+            footer_hint: Some("Press enter to select, or esc to cancel.".into()),
+            items,
+            ..Default::default()
+        });
+    }
+
+    /// Show the config input view for entering API key and endpoint.
+    /// This is Step 2 after selecting a provider.
+    pub(crate) fn show_config_input_view(
+        &mut self,
+        provider: codex_core::anycli::config::ProviderType,
+    ) {
+        let view = crate::bottom_pane::ConfigInputView::new(provider, self.app_event_tx.clone());
+        self.bottom_pane.show_view(Box::new(view));
+        self.request_redraw();
+    }
+
+    /// Show config input view after provider selection.
+    /// This starts the text input flow for API key and endpoint.
+    pub(crate) fn open_config_model_select(
+        &mut self,
+        provider: codex_core::anycli::config::ProviderType,
+    ) {
+        // Show text input view for API key and endpoint
+        self.show_config_input_view(provider);
+    }
+
+    /// Open a popup to select a model for the new config after API key is collected.
+    /// This is the final step where the user picks a model.
+    pub(crate) fn open_config_model_select_with_key(
+        &mut self,
+        provider: codex_core::anycli::config::ProviderType,
+        config_name: String,
+        api_key: String,
+        endpoint: Option<String>,
+    ) {
+        use codex_core::anycli::config::ProviderType;
+        use codex_core::anycli::models::models_for_provider;
+
+        let models = models_for_provider(provider.clone());
+        let provider_name = match &provider {
+            ProviderType::OpenAI => "OpenAI",
+            ProviderType::Anthropic => "Anthropic",
+            ProviderType::Google => "Google Gemini",
+            ProviderType::NewAPI => "New-API",
+        };
+
+        if models.is_empty() {
+            self.add_info_message(
+                format!("No models available for {} provider", provider_name),
+                None,
+            );
+            return;
+        }
+
+        let mut items: Vec<SelectionItem> = Vec::new();
+        for model_info in models {
+            let model_id = model_info.id.to_string();
+            let provider_clone = provider.clone();
+            let config_name_clone = config_name.clone();
+            let api_key_clone = api_key.clone();
+            let endpoint_clone = endpoint.clone();
+            let actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
+                tx.send(AppEvent::SaveNewAnycliConfigComplete {
+                    provider: provider_clone.clone(),
+                    config_name: config_name_clone.clone(),
+                    api_key: api_key_clone.clone(),
+                    endpoint: endpoint_clone.clone(),
+                    model: model_id.clone(),
+                });
+            })];
+            items.push(SelectionItem {
+                name: model_info.name.to_string(),
+                description: Some(model_info.description.to_string()),
+                is_current: model_info.default,
+                actions,
+                dismiss_on_select: true,
+                ..Default::default()
+            });
+        }
+
+        self.bottom_pane.show_selection_view(SelectionViewParams {
+            title: Some(format!("Add {} Configuration", provider_name)),
+            subtitle: Some("Select a model to complete configuration".to_string()),
+            footer_hint: Some("Press enter to save config, or esc to cancel.".into()),
             items,
             ..Default::default()
         });

@@ -63,6 +63,41 @@ pub(crate) enum AppEvent {
     /// Update the current model slug in the running app and widget.
     UpdateModel(String),
 
+    /// Switch to a different AnyCLI provider configuration.
+    SwitchAnycliConfig {
+        config_name: String,
+    },
+
+    /// Open the model selection popup for a new AnyCLI config (step 2 of /config).
+    OpenConfigModelSelect {
+        provider: codex_core::anycli::config::ProviderType,
+    },
+
+    /// Save a new AnyCLI configuration.
+    SaveNewAnycliConfig {
+        provider: codex_core::anycli::config::ProviderType,
+        model: String,
+        config_name: String,
+        env_key: String,
+    },
+
+    /// Open the model selection popup for a new AnyCLI config with API key already collected.
+    OpenConfigModelSelectWithKey {
+        provider: codex_core::anycli::config::ProviderType,
+        config_name: String,
+        api_key: String,
+        endpoint: Option<String>,
+    },
+
+    /// Save a new AnyCLI configuration with all details collected.
+    SaveNewAnycliConfigComplete {
+        provider: codex_core::anycli::config::ProviderType,
+        config_name: String,
+        api_key: String,
+        endpoint: Option<String>,
+        model: String,
+    },
+
     /// Persist the selected model and reasoning effort to the appropriate config.
     PersistModelSelection {
         model: String,

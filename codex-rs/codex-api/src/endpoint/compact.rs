@@ -39,7 +39,7 @@ impl<T: HttpTransport, A: AuthProvider> CompactClient<T, A> {
     fn path(&self) -> Result<&'static str, ApiError> {
         match self.provider.wire {
             WireApi::Compact | WireApi::Responses => Ok("responses/compact"),
-            WireApi::Chat => Err(ApiError::Stream(
+            WireApi::Chat | WireApi::Anthropic | WireApi::Gemini => Err(ApiError::Stream(
                 "compact endpoint requires responses wire api".to_string(),
             )),
         }
@@ -55,7 +55,7 @@ impl<T: HttpTransport, A: AuthProvider> CompactClient<T, A> {
             let mut req = self.provider.build_request(Method::POST, path);
             req.headers.extend(extra_headers.clone());
             req.body = Some(body.clone());
-            add_auth_headers(&self.auth, req)
+            add_auth_headers(&self.auth, req, &self.provider.wire)
         };
 
         let resp = run_with_request_telemetry(

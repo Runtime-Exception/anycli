@@ -12,6 +12,10 @@ pub enum WireApi {
     Responses,
     Chat,
     Compact,
+    /// Anthropic Messages API (https://api.anthropic.com/v1/messages)
+    Anthropic,
+    /// Google Gemini API (https://generativelanguage.googleapis.com/v1beta)
+    Gemini,
 }
 
 /// High-level retry configuration for a provider.
@@ -85,6 +89,17 @@ impl Provider {
         Request {
             method,
             url: self.url_for_path(path),
+            headers: self.headers.clone(),
+            body: None,
+            timeout: None,
+        }
+    }
+
+    /// Build a request with an absolute URL (for APIs like Gemini that embed model in URL).
+    pub fn build_absolute_request(&self, method: Method, url: &str) -> Request {
+        Request {
+            method,
+            url: url.to_string(),
             headers: self.headers.clone(),
             body: None,
             timeout: None,

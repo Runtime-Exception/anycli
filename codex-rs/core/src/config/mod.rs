@@ -1,3 +1,5 @@
+use crate::anycli::AnycliConfig;
+use crate::anycli::is_anycli_mode;
 use crate::auth::AuthCredentialsStoreMode;
 use crate::config::types::DEFAULT_OTEL_ENVIRONMENT;
 use crate::config::types::History;
@@ -1069,7 +1071,34 @@ impl Config {
             model_providers.entry(key).or_insert(provider);
         }
 
+        // Check for AnyCLI mode and apply AnyCLI configuration
+        let (anycli_model_override, anycli_provider_override) = if is_anycli_mode() {
+            if let Ok(anycli_config) = AnycliConfig::load() {
+                // Add all AnyCLI configs as model providers
+                for (name, entry) in &anycli_config.configs {
+                    let provider_info = entry.to_model_provider_info(name);
+                    // Use anycli- prefix to avoid conflicts with built-in providers
+                    let provider_key = format!("anycli-{}", name);
+                    model_providers.insert(provider_key, provider_info);
+                }
+
+                // If there's an active config, use it
+                if let Some(active_entry) = anycli_config.active_entry() {
+                    let provider_key = format!("anycli-{}", anycli_config.active_config);
+                    (Some(active_entry.model.clone()), Some(provider_key))
+                } else {
+                    (None, None)
+                }
+            } else {
+                (None, None)
+            }
+        } else {
+            (None, None)
+        };
+
+        // CLI overrides take highest precedence, then AnyCLI, then profile/config file
         let model_provider_id = model_provider
+            .or(anycli_provider_override)
             .or(config_profile.model_provider)
             .or(cfg.model_provider)
             .unwrap_or_else(|| "openai".to_string());
@@ -1106,7 +1135,9 @@ impl Config {
 
         let forced_login_method = cfg.forced_login_method;
 
+        // CLI overrides take highest precedence, then AnyCLI, then profile/config file
         let model = model
+            .or(anycli_model_override)
             .or(config_profile.model)
             .or(cfg.model)
             .unwrap_or_else(default_model);
@@ -1378,6 +1409,7 @@ mod tests {
 
     use super::*;
     use pretty_assertions::assert_eq;
+    use serial_test::serial;
 
     use std::time::Duration;
     use tempfile::TempDir;
@@ -2933,7 +2965,13 @@ model_verbosity = "high"
     /// Note that profiles are the recommended way to specify a group of
     /// configuration options together.
     #[test]
+    #[serial]
     fn test_precedence_fixture_with_o3_profile() -> std::io::Result<()> {
+        // Disable AnyCLI mode during tests to ensure consistent behavior
+        // SAFETY: Tests use serial_test to avoid concurrent env var access
+        unsafe {
+            std::env::set_var("ANYCLI_MODE", "0");
+        }
         let fixture = create_test_fixture()?;
 
         let o3_profile_overrides = ConfigOverrides {
@@ -3005,11 +3043,20 @@ model_verbosity = "high"
             },
             o3_profile_config
         );
+        unsafe {
+            std::env::remove_var("ANYCLI_MODE");
+        }
         Ok(())
     }
 
     #[test]
+    #[serial]
     fn test_precedence_fixture_with_gpt3_profile() -> std::io::Result<()> {
+        // Disable AnyCLI mode during tests to ensure consistent behavior
+        // SAFETY: Tests use serial_test to avoid concurrent env var access
+        unsafe {
+            std::env::set_var("ANYCLI_MODE", "0");
+        }
         let fixture = create_test_fixture()?;
 
         let gpt3_profile_overrides = ConfigOverrides {
@@ -3095,11 +3142,20 @@ model_verbosity = "high"
         )?;
 
         assert_eq!(expected_gpt3_profile_config, default_profile_config);
+        unsafe {
+            std::env::remove_var("ANYCLI_MODE");
+        }
         Ok(())
     }
 
     #[test]
+    #[serial]
     fn test_precedence_fixture_with_zdr_profile() -> std::io::Result<()> {
+        // Disable AnyCLI mode during tests to ensure consistent behavior
+        // SAFETY: Tests use serial_test to avoid concurrent env var access
+        unsafe {
+            std::env::set_var("ANYCLI_MODE", "0");
+        }
         let fixture = create_test_fixture()?;
 
         let zdr_profile_overrides = ConfigOverrides {
@@ -3171,11 +3227,20 @@ model_verbosity = "high"
 
         assert_eq!(expected_zdr_profile_config, zdr_profile_config);
 
+        unsafe {
+            std::env::remove_var("ANYCLI_MODE");
+        }
         Ok(())
     }
 
     #[test]
+    #[serial]
     fn test_precedence_fixture_with_gpt5_profile() -> std::io::Result<()> {
+        // Disable AnyCLI mode during tests to ensure consistent behavior
+        // SAFETY: Tests use serial_test to avoid concurrent env var access
+        unsafe {
+            std::env::set_var("ANYCLI_MODE", "0");
+        }
         let fixture = create_test_fixture()?;
 
         let gpt5_profile_overrides = ConfigOverrides {
@@ -3247,6 +3312,9 @@ model_verbosity = "high"
 
         assert_eq!(expected_gpt5_profile_config, gpt5_profile_config);
 
+        unsafe {
+            std::env::remove_var("ANYCLI_MODE");
+        }
         Ok(())
     }
 

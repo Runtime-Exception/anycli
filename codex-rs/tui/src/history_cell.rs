@@ -1523,6 +1523,7 @@ mod tests {
     use dirs::home_dir;
     use pretty_assertions::assert_eq;
     use serde_json::json;
+    use serial_test::serial;
     use std::collections::HashMap;
 
     use codex_core::protocol::ExecCommandSource;
@@ -1533,12 +1534,21 @@ mod tests {
     use mcp_types::ToolInputSchema;
 
     fn test_config() -> Config {
-        Config::load_from_base_config_with_overrides(
+        // Disable AnyCLI mode during tests to ensure consistent behavior
+        // SAFETY: Tests use serial_test to avoid concurrent env var access
+        unsafe {
+            std::env::set_var("ANYCLI_MODE", "0");
+        }
+        let config = Config::load_from_base_config_with_overrides(
             ConfigToml::default(),
             ConfigOverrides::default(),
             std::env::temp_dir(),
         )
-        .expect("config")
+        .expect("config");
+        unsafe {
+            std::env::remove_var("ANYCLI_MODE");
+        }
+        config
     }
 
     fn render_lines(lines: &[Line<'static>]) -> Vec<String> {
@@ -1558,6 +1568,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn mcp_tools_output_masks_sensitive_values() {
         let mut config = test_config();
         let mut env = HashMap::new();
@@ -2320,6 +2331,7 @@ mod tests {
         insta::assert_snapshot!(rendered);
     }
     #[test]
+    #[serial]
     fn reasoning_summary_block() {
         let config = test_config();
         let reasoning_format =
@@ -2338,6 +2350,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn reasoning_summary_block_returns_reasoning_cell_when_feature_disabled() {
         let config = test_config();
         let reasoning_format =
@@ -2353,6 +2366,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn reasoning_summary_block_respects_config_overrides() {
         let mut config = test_config();
         config.model = "gpt-3.5-turbo".to_string();
@@ -2374,6 +2388,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn reasoning_summary_block_falls_back_when_header_is_missing() {
         let config = test_config();
         let reasoning_format =
@@ -2389,6 +2404,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn reasoning_summary_block_falls_back_when_summary_is_missing() {
         let config = test_config();
         let reasoning_format =
@@ -2412,6 +2428,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn reasoning_summary_block_splits_header_and_summary_when_present() {
         let config = test_config();
         let reasoning_format =

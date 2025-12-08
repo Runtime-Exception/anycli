@@ -697,6 +697,50 @@ impl App {
                 self.chat_widget.set_model(&model, model_family);
                 self.config.model = model;
             }
+            AppEvent::SwitchAnycliConfig { config_name } => {
+                self.on_switch_anycli_config(&config_name).await;
+            }
+            AppEvent::OpenConfigModelSelect { provider } => {
+                self.chat_widget.open_config_model_select(provider);
+            }
+            AppEvent::SaveNewAnycliConfig {
+                provider,
+                model,
+                config_name,
+                env_key,
+            } => {
+                self.on_save_new_anycli_config(provider, model, config_name, env_key)
+                    .await;
+            }
+            AppEvent::OpenConfigModelSelectWithKey {
+                provider,
+                config_name,
+                api_key,
+                endpoint,
+            } => {
+                self.chat_widget.open_config_model_select_with_key(
+                    provider,
+                    config_name,
+                    api_key,
+                    endpoint,
+                );
+            }
+            AppEvent::SaveNewAnycliConfigComplete {
+                provider,
+                config_name,
+                api_key,
+                endpoint,
+                model,
+            } => {
+                self.on_save_new_anycli_config_complete(
+                    provider,
+                    config_name,
+                    api_key,
+                    endpoint,
+                    model,
+                )
+                .await;
+            }
             AppEvent::OpenReasoningPopup { model } => {
                 self.chat_widget.open_reasoning_popup(model);
             }
@@ -1019,6 +1063,248 @@ impl App {
     fn on_update_reasoning_effort(&mut self, effort: Option<ReasoningEffortConfig>) {
         self.chat_widget.set_reasoning_effort(effort);
         self.config.model_reasoning_effort = effort;
+    }
+
+    async fn on_switch_anycli_config(&mut self, config_name: &str) {
+        use codex_core::anycli::config::AnycliConfig;
+
+        // Load the AnyCLI config
+        let mut anycli_config = match AnycliConfig::load() {
+            Ok(c) => c,
+            Err(e) => {
+                self.chat_widget
+                    .add_error_message(format!("Failed to load AnyCLI config: {}", e));
+                return;
+            }
+        };
+
+        // Check if the config exists
+        let entry = match anycli_config.configs.get(config_name) {
+            Some(e) => e.clone(),
+            None => {
+                self.chat_widget
+                    .add_error_message(format!("Configuration '{}' not found", config_name));
+                return;
+            }
+        };
+
+        // Update the active config in the file
+        anycli_config.active_config = config_name.to_string();
+        if let Err(e) = anycli_config.save() {
+            self.chat_widget
+                .add_error_message(format!("Failed to save AnyCLI config: {}", e));
+            return;
+        }
+
+        // Update the model in our config
+        self.config.model = entry.model.clone();
+
+        // Update the model in the chat widget
+        let model_family = self
+            .server
+            .get_models_manager()
+            .construct_model_family(&entry.model, &self.config)
+            .await;
+        self.chat_widget.set_model(&entry.model, model_family);
+
+        // Show success message
+        let provider_name = match entry.provider_type {
+            codex_core::anycli::config::ProviderType::OpenAI => "OpenAI",
+            codex_core::anycli::config::ProviderType::Anthropic => "Anthropic",
+            codex_core::anycli::config::ProviderType::Google => "Google",
+            codex_core::anycli::config::ProviderType::NewAPI => "New-API",
+        };
+        self.chat_widget.add_info_message(
+            format!(
+                "Switched to '{}' ({} - {})",
+                config_name, provider_name, entry.model
+            ),
+            None,
+        );
+    }
+
+    async fn on_save_new_anycli_config(
+        &mut self,
+        provider: codex_core::anycli::config::ProviderType,
+        model: String,
+        base_config_name: String,
+        env_key: String,
+    ) {
+        use codex_core::anycli;
+        use codex_core::anycli::config::AnycliConfig;
+        use codex_core::anycli::config::ConfigEntry;
+
+        // Ensure the AnyCLI directory exists
+        if let Err(e) = anycli::ensure_anycli_dir() {
+            self.chat_widget
+                .add_error_message(format!("Failed to create AnyCLI config directory: {}", e));
+            return;
+        }
+
+        // Load existing config or create new one
+        let mut anycli_config = AnycliConfig::load().unwrap_or_default();
+
+        // Generate a unique config name
+        let mut config_name = base_config_name.clone();
+        let mut counter = 1;
+        while anycli_config.configs.contains_key(&config_name) {
+            counter += 1;
+            config_name = format!("{}-{}", base_config_name, counter);
+        }
+
+        // Create the new entry
+        let entry = ConfigEntry {
+            provider_type: provider.clone(),
+            endpoint: None,
+            env_key: Some(env_key.clone()),
+            model: model.clone(),
+            reasoning_effort: None,
+            enabled: true,
+        };
+
+        // Add to config and set as active
+        anycli_config.configs.insert(config_name.clone(), entry);
+        anycli_config.active_config = config_name.clone();
+
+        // Save the config
+        if let Err(e) = anycli_config.save() {
+            self.chat_widget
+                .add_error_message(format!("Failed to save AnyCLI config: {}", e));
+            return;
+        }
+
+        // Update the model in our config
+        self.config.model = model.clone();
+
+        // Update the model in the chat widget
+        let model_family = self
+            .server
+            .get_models_manager()
+            .construct_model_family(&model, &self.config)
+            .await;
+        self.chat_widget.set_model(&model, model_family);
+
+        // Show success message
+        let provider_name = match provider {
+            codex_core::anycli::config::ProviderType::OpenAI => "OpenAI",
+            codex_core::anycli::config::ProviderType::Anthropic => "Anthropic",
+            codex_core::anycli::config::ProviderType::Google => "Google",
+            codex_core::anycli::config::ProviderType::NewAPI => "New-API",
+        };
+        self.chat_widget.add_info_message(
+            format!(
+                "Created and activated '{}' ({} - {})\nMake sure ${} is set in your environment.",
+                config_name, provider_name, model, env_key
+            ),
+            None,
+        );
+    }
+
+    /// Save a new AnyCLI configuration with API key provided directly via CLI input.
+    async fn on_save_new_anycli_config_complete(
+        &mut self,
+        provider: codex_core::anycli::config::ProviderType,
+        base_config_name: String,
+        api_key: String,
+        endpoint: Option<String>,
+        model: String,
+    ) {
+        use codex_core::anycli;
+        use codex_core::anycli::config::AnycliConfig;
+        use codex_core::anycli::config::ConfigEntry;
+
+        // Ensure the AnyCLI directory exists
+        if let Err(e) = anycli::ensure_anycli_dir() {
+            self.chat_widget
+                .add_error_message(format!("Failed to create AnyCLI config directory: {}", e));
+            return;
+        }
+
+        // Load existing config or create new one
+        let mut anycli_config = AnycliConfig::load().unwrap_or_default();
+
+        // Generate a unique config name
+        let mut config_name = base_config_name.clone();
+        let mut counter = 1;
+        while anycli_config.configs.contains_key(&config_name) {
+            counter += 1;
+            config_name = format!("{}-{}", base_config_name, counter);
+        }
+
+        // Create the new entry with the API key stored directly
+        // For security, we store the API key in a separate file and reference it
+        let api_key_file =
+            anycli::anycli_config_dir().map(|d| d.join(format!("{}.key", config_name)));
+
+        let env_key = if let Some(ref key_file) = api_key_file {
+            // Write API key to a secure file
+            if let Err(e) = std::fs::write(key_file, &api_key) {
+                self.chat_widget
+                    .add_error_message(format!("Failed to save API key: {}", e));
+                return;
+            }
+            // Set restrictive permissions on the key file (Unix only)
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if let Err(e) =
+                    std::fs::set_permissions(key_file, std::fs::Permissions::from_mode(0o600))
+                {
+                    tracing::warn!("Failed to set permissions on key file: {}", e);
+                }
+            }
+            // Use a special marker to indicate file-based key
+            Some(format!("file:{}", key_file.display()))
+        } else {
+            None
+        };
+
+        // Create the new entry
+        let entry = ConfigEntry {
+            provider_type: provider.clone(),
+            endpoint,
+            env_key,
+            model: model.clone(),
+            reasoning_effort: None,
+            enabled: true,
+        };
+
+        // Add to config and set as active
+        anycli_config.configs.insert(config_name.clone(), entry);
+        anycli_config.active_config = config_name.clone();
+
+        // Save the config
+        if let Err(e) = anycli_config.save() {
+            self.chat_widget
+                .add_error_message(format!("Failed to save AnyCLI config: {}", e));
+            return;
+        }
+
+        // Update the model in our config
+        self.config.model = model.clone();
+
+        // Update the model in the chat widget
+        let model_family = self
+            .server
+            .get_models_manager()
+            .construct_model_family(&model, &self.config)
+            .await;
+        self.chat_widget.set_model(&model, model_family);
+
+        // Show success message
+        let provider_name = match provider {
+            codex_core::anycli::config::ProviderType::OpenAI => "OpenAI",
+            codex_core::anycli::config::ProviderType::Anthropic => "Anthropic",
+            codex_core::anycli::config::ProviderType::Google => "Google",
+            codex_core::anycli::config::ProviderType::NewAPI => "New-API",
+        };
+        self.chat_widget.add_info_message(
+            format!(
+                "Created and activated '{}' ({} - {})\nAPI key saved securely.",
+                config_name, provider_name, model
+            ),
+            None,
+        );
     }
 
     async fn handle_key_event(&mut self, tui: &mut tui::Tui, key_event: KeyEvent) {

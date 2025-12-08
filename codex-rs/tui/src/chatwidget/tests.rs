@@ -61,6 +61,7 @@ use crossterm::event::KeyEvent;
 use crossterm::event::KeyModifiers;
 use insta::assert_snapshot;
 use pretty_assertions::assert_eq;
+use serial_test::serial;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use tempfile::NamedTempFile;
@@ -1726,7 +1727,14 @@ fn render_bottom_popup(chat: &ChatWidget, width: u16) -> String {
 }
 
 #[test]
+#[serial]
 fn model_selection_popup_snapshot() {
+    // Disable AnyCLI mode to test the standard model popup
+    // SAFETY: This is a single-threaded test with no concurrent access to env vars
+    unsafe {
+        std::env::set_var("ANYCLI_MODE", "0");
+    }
+
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual();
 
     chat.config.model = "gpt-5-codex".to_string();
@@ -1734,6 +1742,12 @@ fn model_selection_popup_snapshot() {
 
     let popup = render_bottom_popup(&chat, 80);
     assert_snapshot!("model_selection_popup", popup);
+
+    // Clean up
+    // SAFETY: This is a single-threaded test with no concurrent access to env vars
+    unsafe {
+        std::env::remove_var("ANYCLI_MODE");
+    }
 }
 
 #[test]
@@ -1944,7 +1958,14 @@ fn feedback_upload_consent_popup_snapshot() {
 }
 
 #[test]
+#[serial]
 fn reasoning_popup_escape_returns_to_model_popup() {
+    // Disable AnyCLI mode to test the standard model popup
+    // SAFETY: This is a single-threaded test with no concurrent access to env vars
+    unsafe {
+        std::env::set_var("ANYCLI_MODE", "0");
+    }
+
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual();
 
     chat.config.model = "gpt-5.1".to_string();
@@ -1961,6 +1982,12 @@ fn reasoning_popup_escape_returns_to_model_popup() {
     let after_escape = render_bottom_popup(&chat, 80);
     assert!(after_escape.contains("Select Model and Effort"));
     assert!(!after_escape.contains("Select Reasoning Level"));
+
+    // Clean up
+    // SAFETY: This is a single-threaded test with no concurrent access to env vars
+    unsafe {
+        std::env::remove_var("ANYCLI_MODE");
+    }
 }
 
 #[test]

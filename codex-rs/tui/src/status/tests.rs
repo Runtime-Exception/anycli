@@ -17,16 +17,26 @@ use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::openai_models::ReasoningEffort;
 use insta::assert_snapshot;
 use ratatui::prelude::*;
+use serial_test::serial;
 use std::path::PathBuf;
 use tempfile::TempDir;
 
 fn test_config(temp_home: &TempDir) -> Config {
-    Config::load_from_base_config_with_overrides(
+    // Disable AnyCLI mode during tests to ensure consistent behavior
+    // SAFETY: Tests use serial_test to avoid concurrent env var access
+    unsafe {
+        std::env::set_var("ANYCLI_MODE", "0");
+    }
+    let config = Config::load_from_base_config_with_overrides(
         ConfigToml::default(),
         ConfigOverrides::default(),
         temp_home.path().to_path_buf(),
     )
-    .expect("load config")
+    .expect("load config");
+    unsafe {
+        std::env::remove_var("ANYCLI_MODE");
+    }
+    config
 }
 
 fn test_auth_manager(config: &Config) -> AuthManager {
@@ -79,6 +89,7 @@ fn reset_at_from(captured_at: &chrono::DateTime<chrono::Local>, seconds: i64) ->
 }
 
 #[test]
+#[serial]
 fn status_snapshot_includes_reasoning_details() {
     let temp_home = TempDir::new().expect("temp home");
     let mut config = test_config(&temp_home);
@@ -145,6 +156,7 @@ fn status_snapshot_includes_reasoning_details() {
 }
 
 #[test]
+#[serial]
 fn status_snapshot_includes_monthly_limit() {
     let temp_home = TempDir::new().expect("temp home");
     let mut config = test_config(&temp_home);
@@ -198,6 +210,7 @@ fn status_snapshot_includes_monthly_limit() {
 }
 
 #[test]
+#[serial]
 fn status_snapshot_shows_unlimited_credits() {
     let temp_home = TempDir::new().expect("temp home");
     let config = test_config(&temp_home);
@@ -238,6 +251,7 @@ fn status_snapshot_shows_unlimited_credits() {
 }
 
 #[test]
+#[serial]
 fn status_snapshot_shows_positive_credits() {
     let temp_home = TempDir::new().expect("temp home");
     let config = test_config(&temp_home);
@@ -278,6 +292,7 @@ fn status_snapshot_shows_positive_credits() {
 }
 
 #[test]
+#[serial]
 fn status_snapshot_hides_zero_credits() {
     let temp_home = TempDir::new().expect("temp home");
     let config = test_config(&temp_home);
@@ -316,6 +331,7 @@ fn status_snapshot_hides_zero_credits() {
 }
 
 #[test]
+#[serial]
 fn status_snapshot_hides_when_has_no_credits_flag() {
     let temp_home = TempDir::new().expect("temp home");
     let config = test_config(&temp_home);
@@ -354,6 +370,7 @@ fn status_snapshot_hides_when_has_no_credits_flag() {
 }
 
 #[test]
+#[serial]
 fn status_card_token_usage_excludes_cached_tokens() {
     let temp_home = TempDir::new().expect("temp home");
     let mut config = test_config(&temp_home);
@@ -393,6 +410,7 @@ fn status_card_token_usage_excludes_cached_tokens() {
 }
 
 #[test]
+#[serial]
 fn status_snapshot_truncates_in_narrow_terminal() {
     let temp_home = TempDir::new().expect("temp home");
     let mut config = test_config(&temp_home);
@@ -449,6 +467,7 @@ fn status_snapshot_truncates_in_narrow_terminal() {
 }
 
 #[test]
+#[serial]
 fn status_snapshot_shows_missing_limits_message() {
     let temp_home = TempDir::new().expect("temp home");
     let mut config = test_config(&temp_home);
@@ -490,6 +509,7 @@ fn status_snapshot_shows_missing_limits_message() {
 }
 
 #[test]
+#[serial]
 fn status_snapshot_includes_credits_and_limits() {
     let temp_home = TempDir::new().expect("temp home");
     let mut config = test_config(&temp_home);
@@ -550,6 +570,7 @@ fn status_snapshot_includes_credits_and_limits() {
 }
 
 #[test]
+#[serial]
 fn status_snapshot_shows_empty_limits_message() {
     let temp_home = TempDir::new().expect("temp home");
     let mut config = test_config(&temp_home);
@@ -598,6 +619,7 @@ fn status_snapshot_shows_empty_limits_message() {
 }
 
 #[test]
+#[serial]
 fn status_snapshot_shows_stale_limits_message() {
     let temp_home = TempDir::new().expect("temp home");
     let mut config = test_config(&temp_home);
@@ -655,6 +677,7 @@ fn status_snapshot_shows_stale_limits_message() {
 }
 
 #[test]
+#[serial]
 fn status_snapshot_cached_limits_hide_credits_without_flag() {
     let temp_home = TempDir::new().expect("temp home");
     let mut config = test_config(&temp_home);
@@ -716,6 +739,7 @@ fn status_snapshot_cached_limits_hide_credits_without_flag() {
 }
 
 #[test]
+#[serial]
 fn status_context_window_uses_last_usage() {
     let temp_home = TempDir::new().expect("temp home");
     let mut config = test_config(&temp_home);
