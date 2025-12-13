@@ -285,6 +285,11 @@ debug = 1         # Reduce debug symbol size
 inherits = "test"
 opt-level = 0
 
+[profile.release-fast]
+inherits = "release"
+lto = "thin"
+codegen-units = 16
+
 [patch.crates-io]
 # Uncomment to debug local changes.
 # ratatui = { path = "../../ratatui" }
