@@ -768,9 +768,22 @@ impl Session {
         sub_id: String,
         updates: SessionSettingsUpdate,
     ) -> Arc<TurnContext> {
+        let anycli_provider_override = if crate::anycli::is_anycli_mode() {
+            crate::anycli::AnycliConfig::load().ok().and_then(|cfg| {
+                let active_name = cfg.active_config.clone();
+                cfg.active_entry()
+                    .map(|entry| entry.to_model_provider_info(&active_name))
+            })
+        } else {
+            None
+        };
+
         let session_configuration = {
             let mut state = self.state.lock().await;
-            let session_configuration = state.session_configuration.clone().apply(&updates);
+            let mut session_configuration = state.session_configuration.clone().apply(&updates);
+            if let Some(provider) = anycli_provider_override {
+                session_configuration.provider = provider;
+            }
             state.session_configuration = session_configuration.clone();
             session_configuration
         };

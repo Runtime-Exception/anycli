@@ -1,9 +1,9 @@
 {
-  "name": "@openai/codex",
-  "version": "0.0.0-dev",
+  "name": "@unifylm/anycli",
+  "version": "2.0.4-alpha",
   "license": "Apache-2.0",
   "bin": {
-    "codex": "bin/codex.js"
+    "anycli": "bin/codex.js"
   },
   "type": "module",
   "engines": {
@@ -15,7 +15,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/openai/codex.git",
+    "url": "git+https://github.com/runtime-exception/anycli.git",
     "directory": "codex-cli"
   }
 }

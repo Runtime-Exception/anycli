@@ -1067,6 +1067,7 @@ impl App {
 
     async fn on_switch_anycli_config(&mut self, config_name: &str) {
         use codex_core::anycli::config::AnycliConfig;
+        use codex_core::protocol::Op;
 
         // Load the AnyCLI config
         let mut anycli_config = match AnycliConfig::load() {
@@ -1106,6 +1107,14 @@ impl App {
             .construct_model_family(&entry.model, &self.config)
             .await;
         self.chat_widget.set_model(&entry.model, model_family);
+        self.chat_widget.submit_op(Op::OverrideTurnContext {
+            cwd: None,
+            approval_policy: None,
+            sandbox_policy: None,
+            model: Some(entry.model.clone()),
+            effort: None,
+            summary: None,
+        });
 
         // Show success message
         let provider_name = match entry.provider_type {

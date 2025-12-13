@@ -104,13 +104,6 @@ pub(crate) async fn auth_provider_from_auth(
     auth: Option<CodexAuth>,
     provider: &ModelProviderInfo,
 ) -> crate::error::Result<CoreAuthProvider> {
-    if let Some(api_key) = provider.api_key()? {
-        return Ok(CoreAuthProvider {
-            token: Some(api_key),
-            account_id: None,
-        });
-    }
-
     if let Some(token) = provider.experimental_bearer_token.clone() {
         return Ok(CoreAuthProvider {
             token: Some(token),
@@ -118,18 +111,32 @@ pub(crate) async fn auth_provider_from_auth(
         });
     }
 
-    if let Some(auth) = auth {
-        let token = auth.get_token().await?;
-        Ok(CoreAuthProvider {
-            token: Some(token),
-            account_id: auth.get_account_id(),
-        })
-    } else {
-        Ok(CoreAuthProvider {
+    if provider.requires_openai_auth {
+        if let Some(auth) = auth {
+            let token = auth.get_token().await?;
+            return Ok(CoreAuthProvider {
+                token: Some(token),
+                account_id: auth.get_account_id(),
+            });
+        }
+
+        return Ok(CoreAuthProvider {
             token: None,
             account_id: None,
-        })
+        });
     }
+
+    if let Some(api_key) = provider.api_key()? {
+        return Ok(CoreAuthProvider {
+            token: Some(api_key),
+            account_id: None,
+        });
+    }
+
+    Ok(CoreAuthProvider {
+        token: None,
+        account_id: None,
+    })
 }
 
 #[derive(Debug, Deserialize)]

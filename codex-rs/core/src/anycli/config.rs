@@ -169,21 +169,53 @@ impl ConfigEntry {
     /// model provider infrastructure.
     pub fn to_model_provider_info(&self, name: &str) -> ModelProviderInfo {
         let env_key = self.effective_env_key();
+        let is_openai = matches!(self.provider_type, ProviderType::OpenAI);
+
+        let base_url = if is_openai {
+            // Mirror upstream OpenAI provider behavior:
+            // - default to `None` so the runtime can choose ChatGPT vs API base URL
+            //   depending on auth mode
+            // - allow overriding via `OPENAI_BASE_URL` or explicit AnyCLI endpoint.
+            self.endpoint.clone().or_else(|| {
+                std::env::var("OPENAI_BASE_URL")
+                    .ok()
+                    .filter(|v| !v.trim().is_empty())
+            })
+        } else {
+            self.effective_endpoint()
+        };
+
+        let http_headers = is_openai.then(|| {
+            [("version".to_string(), env!("CARGO_PKG_VERSION").to_string())]
+                .into_iter()
+                .collect()
+        });
+        let env_http_headers = is_openai.then(|| {
+            [
+                (
+                    "OpenAI-Organization".to_string(),
+                    "OPENAI_ORGANIZATION".to_string(),
+                ),
+                ("OpenAI-Project".to_string(), "OPENAI_PROJECT".to_string()),
+            ]
+            .into_iter()
+            .collect()
+        });
 
         ModelProviderInfo {
             name: name.to_string(),
-            base_url: self.effective_endpoint(),
+            base_url,
             env_key: Some(env_key),
             env_key_instructions: None,
             experimental_bearer_token: None,
             wire_api: self.provider_type.wire_api(),
             query_params: None,
-            http_headers: None,
-            env_http_headers: None,
+            http_headers,
+            env_http_headers,
             request_max_retries: None,
             stream_max_retries: None,
             stream_idle_timeout_ms: None,
-            requires_openai_auth: matches!(self.provider_type, ProviderType::OpenAI),
+            requires_openai_auth: is_openai,
         }
     }
 }
