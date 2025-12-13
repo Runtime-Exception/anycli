@@ -57,24 +57,28 @@ fn openai_models() -> Vec<ModelInfo> {
     vec![
         ModelInfo::new(
             "gpt-5.1-codex-max",
-            "GPT-5.1 Codex Max",
-            "Most capable OpenAI model for coding tasks",
+            "gpt-5.1-codex-max",
+            "Latest Codex-optimized flagship for deep and fast reasoning.",
             true,
         ),
         ModelInfo::new(
-            "gpt-4o",
-            "GPT-4o",
-            "Fast and capable multimodal model",
+            "gpt-5.1-codex",
+            "gpt-5.1-codex",
+            "Optimized for codex.",
             false,
         ),
         ModelInfo::new(
-            "gpt-4-turbo",
-            "GPT-4 Turbo",
-            "High capability model with vision",
+            "gpt-5.1-codex-mini",
+            "gpt-5.1-codex-mini",
+            "Optimized for codex. Cheaper, faster, but less capable.",
             false,
         ),
-        ModelInfo::new("o3", "O3", "Advanced reasoning model", false),
-        ModelInfo::new("o3-mini", "O3 Mini", "Efficient reasoning model", false),
+        ModelInfo::new(
+            "gpt-5.2",
+            "gpt-5.2",
+            "Latest frontier model with improvements across knowledge, reasoning and coding",
+            false,
+        ),
     ]
 }
 

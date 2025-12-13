@@ -76,6 +76,10 @@ static PRESETS: Lazy<Vec<ModelPreset>> = Lazy::new(|| {
             default_reasoning_effort: ReasoningEffort::Medium,
             supported_reasoning_efforts: vec![
                 ReasoningEffortPreset {
+                    effort: ReasoningEffort::Low,
+                    description: "Fastest responses with limited reasoning".to_string(),
+                },
+                ReasoningEffortPreset {
                     effort: ReasoningEffort::Medium,
                     description: "Dynamically adjusts reasoning based on the task".to_string(),
                 },
@@ -83,6 +87,38 @@ static PRESETS: Lazy<Vec<ModelPreset>> = Lazy::new(|| {
                     effort: ReasoningEffort::High,
                     description: "Maximizes reasoning depth for complex or ambiguous problems"
                         .to_string(),
+                },
+            ],
+            is_default: false,
+            upgrade: Some(ModelUpgrade {
+                id: "gpt-5.1-codex-max".to_string(),
+                reasoning_effort_mapping: None,
+                migration_config_key: HIDE_GPT_5_1_CODEX_MAX_MIGRATION_PROMPT_CONFIG.to_string(),
+            }),
+            show_in_picker: true,
+        },
+        ModelPreset {
+            id: "gpt-5.2".to_string(),
+            model: "gpt-5.2".to_string(),
+            display_name: "gpt-5.2".to_string(),
+            description: "Latest frontier model with improvements across knowledge, reasoning and coding".to_string(),
+            default_reasoning_effort: ReasoningEffort::Medium,
+            supported_reasoning_efforts: vec![
+                ReasoningEffortPreset {
+                    effort: ReasoningEffort::Low,
+                    description: "Fast responses with lighter reasoning".to_string(),
+                },
+                ReasoningEffortPreset {
+                    effort: ReasoningEffort::Medium,
+                    description: "Balances speed and reasoning depth for everyday tasks".to_string(),
+                },
+                ReasoningEffortPreset {
+                    effort: ReasoningEffort::High,
+                    description: "Maximizes reasoning depth for complex problems".to_string(),
+                },
+                ReasoningEffortPreset {
+                    effort: ReasoningEffort::XHigh,
+                    description: "Extra high reasoning depth for complex problems".to_string(),
                 },
             ],
             is_default: false,
@@ -119,7 +155,7 @@ static PRESETS: Lazy<Vec<ModelPreset>> = Lazy::new(|| {
                 reasoning_effort_mapping: None,
                 migration_config_key: HIDE_GPT_5_1_CODEX_MAX_MIGRATION_PROMPT_CONFIG.to_string(),
             }),
-            show_in_picker: true,
+            show_in_picker: false,
         },
         // Deprecated models.
         ModelPreset {

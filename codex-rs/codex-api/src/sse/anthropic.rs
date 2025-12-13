@@ -373,15 +373,17 @@ struct AnthropicError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
     use tokio::sync::mpsc;
 
     #[tokio::test]
     async fn test_process_message_start() {
-        let (tx, mut rx) = mpsc::channel(10);
+        let (tx, _rx) = mpsc::channel(10);
         let mut response_id = String::new();
         let mut current_tool_use = None;
         let mut input_tokens = None;
         let mut output_tokens = None;
+        let mut message_item_emitted = false;
 
         let event = Event {
             event: "message_start".to_string(),
@@ -396,6 +398,7 @@ mod tests {
             &mut current_tool_use,
             &mut input_tokens,
             &mut output_tokens,
+            &mut message_item_emitted,
         )
         .await
         .unwrap();
@@ -411,6 +414,7 @@ mod tests {
         let mut current_tool_use = None;
         let mut input_tokens = None;
         let mut output_tokens = None;
+        let mut message_item_emitted = false;
 
         let event = Event {
             event: "content_block_delta".to_string(),
@@ -425,17 +429,21 @@ mod tests {
             &mut current_tool_use,
             &mut input_tokens,
             &mut output_tokens,
+            &mut message_item_emitted,
         )
         .await
         .unwrap();
 
-        if let Ok(result) = rx.try_recv() {
-            match result {
-                Ok(ResponseEvent::OutputTextDelta(text)) => {
-                    assert_eq!(text, "Hello");
-                }
-                _ => panic!("Expected OutputTextDelta event"),
-            }
+        let first = rx.recv().await.unwrap().unwrap();
+        assert!(matches!(
+            first,
+            ResponseEvent::OutputItemAdded(ResponseItem::Message { .. })
+        ));
+
+        let second = rx.recv().await.unwrap().unwrap();
+        match second {
+            ResponseEvent::OutputTextDelta(text) => assert_eq!(text, "Hello"),
+            other => panic!("Expected OutputTextDelta event, got {other:?}"),
         }
     }
 }
