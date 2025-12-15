@@ -1,10 +1,7 @@
-<p align="center"><code>npm i -g @openai/codex</code><br />or <code>brew install --cask codex</code></p>
+<p align="center"><code>npm i -g @unifylm/anycli</code><br />or <code>brew install --cask codex</code></p>
 
-<p align="center"><strong>Codex CLI</strong> is a coding agent from OpenAI that runs locally on your computer.
-</br>
-</br>If you want Codex in your code editor (VS Code, Cursor, Windsurf), <a href="https://developers.openai.com/codex/ide">install in your IDE</a>
-</br>If you are looking for the <em>cloud-based agent</em> from OpenAI, <strong>Codex Web</strong>, go to <a href="https://chatgpt.com/codex">chatgpt.com/codex</a></p>
-
+<p align="center"><strong>AnyCLI</strong> is a revolutionary coding agent based on OpenAI Codex that runs locally on your computer.
+  
 <p align="center">
   <img src="./.github/codex-cli-splash.png" alt="Codex CLI splash" width="80%" />
   </p>
@@ -13,24 +10,18 @@
 
 ## Quickstart
 
-### Installing and running Codex CLI
+### Installing and running AnyCLI
 
 Install globally with your preferred package manager. If you use npm:
 
 ```shell
-npm install -g @openai/codex
+npm install -g @unifylm/anycli
 ```
 
-Alternatively, if you use Homebrew:
+Then simply run `anycli` to get started:
 
 ```shell
-brew install --cask codex
-```
-
-Then simply run `codex` to get started:
-
-```shell
-codex
+anycli
 ```
 
 If you're running into upgrade issues with Homebrew, see the [FAQ entry on brew upgrade codex](./docs/faq.md#brew-upgrade-codex-isnt-upgrading-me).
