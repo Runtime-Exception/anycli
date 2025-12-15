@@ -104,7 +104,16 @@ pub(crate) async fn auth_provider_from_auth(
     auth: Option<CodexAuth>,
     provider: &ModelProviderInfo,
 ) -> crate::error::Result<CoreAuthProvider> {
+    tracing::debug!(
+        provider_name = %provider.name,
+        env_key = ?provider.env_key,
+        wire_api = ?provider.wire_api,
+        requires_openai_auth = %provider.requires_openai_auth,
+        "Resolving auth for provider"
+    );
+
     if let Some(token) = provider.experimental_bearer_token.clone() {
+        tracing::debug!("Using experimental_bearer_token for auth");
         return Ok(CoreAuthProvider {
             token: Some(token),
             account_id: None,
@@ -114,12 +123,21 @@ pub(crate) async fn auth_provider_from_auth(
     if provider.requires_openai_auth {
         if let Some(auth) = auth {
             let token = auth.get_token().await?;
+            tracing::debug!(
+                auth_mode = ?auth.mode,
+                token_len = token.len(),
+                "Using OpenAI auth token"
+            );
             return Ok(CoreAuthProvider {
                 token: Some(token),
                 account_id: auth.get_account_id(),
             });
         }
 
+        tracing::warn!(
+            provider_name = %provider.name,
+            "requires_openai_auth is true but no auth provided - API call will fail"
+        );
         return Ok(CoreAuthProvider {
             token: None,
             account_id: None,
@@ -127,12 +145,22 @@ pub(crate) async fn auth_provider_from_auth(
     }
 
     if let Some(api_key) = provider.api_key()? {
+        tracing::debug!(
+            env_key = ?provider.env_key,
+            api_key_len = api_key.len(),
+            "Using API key from env_key"
+        );
         return Ok(CoreAuthProvider {
             token: Some(api_key),
             account_id: None,
         });
     }
 
+    tracing::warn!(
+        provider_name = %provider.name,
+        env_key = ?provider.env_key,
+        "No auth token available - API call may fail"
+    );
     Ok(CoreAuthProvider {
         token: None,
         account_id: None,

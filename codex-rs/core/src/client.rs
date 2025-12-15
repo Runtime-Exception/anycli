@@ -4,6 +4,7 @@ use crate::api_bridge::auth_provider_from_auth;
 use crate::api_bridge::map_api_error;
 use codex_api::AggregateStreamExt;
 use codex_api::AnthropicClient as ApiAnthropicClient;
+use codex_api::AuthProvider as ApiAuthProvider;
 use codex_api::AnthropicOptions as ApiAnthropicOptions;
 use codex_api::ChatClient as ApiChatClient;
 use codex_api::CompactClient as ApiCompactClient;
@@ -301,13 +302,41 @@ impl ModelClient {
         let tools_json = create_tools_json_for_chat_completions_api(&prompt.tools)?;
         let api_prompt = build_api_prompt(prompt, instructions, tools_json);
 
+        // Log detailed provider info for debugging Anthropic issues
+        tracing::info!(
+            provider_name = %self.provider.name,
+            provider_base_url = ?self.provider.base_url,
+            provider_wire_api = ?self.provider.wire_api,
+            provider_env_key = ?self.provider.env_key,
+            provider_requires_openai_auth = %self.provider.requires_openai_auth,
+            model = %self.config.model,
+            session_source = ?self.session_source,
+            "stream_anthropic_api: starting request"
+        );
+
         let mut refreshed = false;
         loop {
             let auth = auth_manager.as_ref().and_then(|m| m.auth());
             let api_provider = self
                 .provider
                 .to_api_provider(auth.as_ref().map(|a| a.mode))?;
+
+            // Log the API provider details
+            tracing::info!(
+                api_provider_name = %api_provider.name,
+                api_provider_base_url = %api_provider.base_url,
+                api_provider_wire = ?api_provider.wire,
+                "stream_anthropic_api: constructed API provider"
+            );
+
             let api_auth = auth_provider_from_auth(auth.clone(), &self.provider).await?;
+
+            // Log auth resolution result (without revealing token)
+            tracing::info!(
+                has_token = api_auth.bearer_token().is_some(),
+                token_len = api_auth.bearer_token().map(|t| t.len()).unwrap_or(0),
+                "stream_anthropic_api: resolved auth"
+            );
             let transport = ReqwestTransport::new(build_reqwest_client());
             let (request_telemetry, sse_telemetry) = self.build_streaming_telemetry();
             let client = ApiAnthropicClient::new(transport, api_provider, api_auth)
@@ -348,16 +377,14 @@ impl ModelClient {
 
         // Determine thinking level from config or model family
         let thinking_level = if model_family.supports_reasoning_summaries {
-            self.effort
-                .map(|e| match e {
-                    ReasoningEffortConfig::None | ReasoningEffortConfig::Minimal => None,
-                    ReasoningEffortConfig::Low => Some("low".to_string()),
-                    ReasoningEffortConfig::Medium => Some("medium".to_string()),
-                    ReasoningEffortConfig::High | ReasoningEffortConfig::XHigh => {
-                        Some("high".to_string())
-                    }
-                })
-                .flatten()
+            self.effort.and_then(|e| match e {
+                ReasoningEffortConfig::None | ReasoningEffortConfig::Minimal => None,
+                ReasoningEffortConfig::Low => Some("low".to_string()),
+                ReasoningEffortConfig::Medium => Some("medium".to_string()),
+                ReasoningEffortConfig::High | ReasoningEffortConfig::XHigh => {
+                    Some("high".to_string())
+                }
+            })
         } else {
             None
         };
@@ -524,12 +551,26 @@ where
     tokio::spawn(async move {
         let mut logged_error = false;
         let mut api_stream = api_stream;
+        let mut event_count = 0u64;
+        tracing::info!("map_response_stream: starting to receive API events");
         while let Some(event) = api_stream.next().await {
+            event_count += 1;
+            if event_count <= 5 || event_count.is_multiple_of(20) {
+                tracing::info!(
+                    event_count,
+                    event_type = ?event.as_ref().map(std::mem::discriminant).ok(),
+                    "map_response_stream: received API event"
+                );
+            }
             match event {
                 Ok(ResponseEvent::Completed {
                     response_id,
                     token_usage,
                 }) => {
+                    tracing::info!(
+                        event_count,
+                        "map_response_stream: stream completed with ResponseEvent::Completed"
+                    );
                     if let Some(usage) = &token_usage {
                         manager.sse_event_completed(
                             usage.input_tokens,
@@ -556,6 +597,7 @@ where
                     }
                 }
                 Err(err) => {
+                    tracing::error!(event_count, error = ?err, "map_response_stream: received API error");
                     let mapped = map_api_error(err);
                     if !logged_error {
                         manager.see_event_completed_failed(&mapped);
@@ -567,6 +609,7 @@ where
                 }
             }
         }
+        tracing::info!(event_count, "map_response_stream: API stream ended");
     });
 
     ResponseStream { rx_event }

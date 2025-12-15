@@ -83,10 +83,10 @@ impl ConfigSetupWidget {
     }
 
     fn selected_provider(&self) -> ProviderType {
-        self.providers[self.provider_index].0.clone()
+        self.providers[self.provider_index].0
     }
 
-    fn default_env_var_for_provider(&self, provider: &ProviderType) -> String {
+    fn default_env_var_for_provider(&self, provider: ProviderType) -> String {
         match provider {
             ProviderType::OpenAI => "OPENAI_API_KEY".to_string(),
             ProviderType::Anthropic => "ANTHROPIC_API_KEY".to_string(),
@@ -114,7 +114,7 @@ impl ConfigSetupWidget {
                     self.config_name = self.default_config_name();
                 }
                 if self.env_var_name.is_empty() {
-                    self.env_var_name = self.default_env_var_for_provider(&provider);
+                    self.env_var_name = self.default_env_var_for_provider(provider);
                 }
                 ConfigSetupState::EnterName
             }
@@ -128,7 +128,7 @@ impl ConfigSetupWidget {
             ConfigSetupState::EnterEndpoint => ConfigSetupState::EnterApiKey,
             ConfigSetupState::EnterApiKey => {
                 // Load models for the selected provider
-                self.available_models = models_for_provider(provider.clone())
+                self.available_models = models_for_provider(provider)
                     .into_iter()
                     .map(|m| m.id.to_string())
                     .collect();
@@ -178,7 +178,7 @@ impl ConfigSetupWidget {
             .unwrap_or_else(|| "custom-model".to_string());
 
         let entry = ConfigEntry {
-            provider_type: provider.clone(),
+            provider_type: provider,
             endpoint: if matches!(provider, ProviderType::NewAPI) {
                 Some(self.endpoint.clone())
             } else {
@@ -193,6 +193,8 @@ impl ConfigSetupWidget {
             model,
             reasoning_effort: None,
             enabled: true,
+            use_account_auth: false,
+            wire_api: None,
         };
 
         let mut config = AnycliConfig::load().unwrap_or_default();
@@ -200,7 +202,7 @@ impl ConfigSetupWidget {
         config.active_config = self.config_name.clone();
 
         if let Err(e) = config.save() {
-            self.error = Some(format!("Failed to save config: {}", e));
+            self.error = Some(format!("Failed to save config: {e}"));
         }
     }
 
@@ -366,14 +368,14 @@ impl WidgetRef for ConfigSetupWidget {
         let mut lines: Vec<Line<'static>> = Vec::new();
 
         // Title
-        lines.push(Line::from("").into());
+        lines.push(Line::from(""));
         lines.push(Line::from("AnyCLI Configuration Setup").bold().cyan());
-        lines.push(Line::from("").into());
+        lines.push(Line::from(""));
 
         match &self.state {
             ConfigSetupState::PickProvider => {
-                lines.push(Line::from("Select your AI provider:").into());
-                lines.push(Line::from("").into());
+                lines.push(Line::from("Select your AI provider:"));
+                lines.push(Line::from(""));
 
                 for (i, (_, name)) in self.providers.iter().enumerate() {
                     let prefix = if i == self.provider_index {
@@ -381,45 +383,45 @@ impl WidgetRef for ConfigSetupWidget {
                     } else {
                         "  "
                     };
-                    let line = format!("{}{}", prefix, name);
+                    let line = format!("{prefix}{name}");
                     if i == self.provider_index {
                         lines.push(Line::from(line).cyan().bold());
                     } else {
-                        lines.push(Line::from(line).into());
+                        lines.push(Line::from(line));
                     }
                 }
 
-                lines.push(Line::from("").into());
+                lines.push(Line::from(""));
                 lines.push(Line::from("Use ↑/↓ to navigate, Enter to select").dim());
             }
             ConfigSetupState::EnterName => {
-                lines.push(Line::from("Enter a name for this configuration:").into());
-                lines.push(Line::from("").into());
+                lines.push(Line::from("Enter a name for this configuration:"));
+                lines.push(Line::from(""));
                 let display = if self.config_name.is_empty() {
                     "_".to_string()
                 } else {
                     format!("{}_", self.config_name)
                 };
                 lines.push(Line::from(display).cyan());
-                lines.push(Line::from("").into());
+                lines.push(Line::from(""));
                 lines.push(Line::from("Press Enter to continue, Esc to go back").dim());
             }
             ConfigSetupState::EnterEndpoint => {
-                lines.push(Line::from("Enter the API endpoint URL:").into());
+                lines.push(Line::from("Enter the API endpoint URL:"));
                 lines.push(Line::from("(e.g., https://api.newapi.cc)").dim());
-                lines.push(Line::from("").into());
+                lines.push(Line::from(""));
                 let display = if self.endpoint.is_empty() {
                     "https://_".to_string()
                 } else {
                     format!("{}_", self.endpoint)
                 };
                 lines.push(Line::from(display).cyan());
-                lines.push(Line::from("").into());
+                lines.push(Line::from(""));
                 lines.push(Line::from("Press Enter to continue, Esc to go back").dim());
             }
             ConfigSetupState::EnterApiKey => {
-                lines.push(Line::from("Configure API authentication:").into());
-                lines.push(Line::from("").into());
+                lines.push(Line::from("Configure API authentication:"));
+                lines.push(Line::from(""));
 
                 let env_prefix = if self.use_env_var { "› " } else { "  " };
                 let direct_prefix = if !self.use_env_var { "› " } else { "  " };
@@ -439,26 +441,26 @@ impl WidgetRef for ConfigSetupWidget {
                     lines.push(Line::from(direct_line).cyan());
                 }
 
-                lines.push(Line::from("").into());
+                lines.push(Line::from(""));
                 lines.push(
                     Line::from("Press Tab to switch, Enter to continue, Esc to go back").dim(),
                 );
             }
             ConfigSetupState::SelectModel => {
-                lines.push(Line::from("Select a model:").into());
-                lines.push(Line::from("").into());
+                lines.push(Line::from("Select a model:"));
+                lines.push(Line::from(""));
 
                 for (i, model) in self.available_models.iter().enumerate() {
                     let prefix = if i == self.model_index { "› " } else { "  " };
-                    let line = format!("{}{}", prefix, model);
+                    let line = format!("{prefix}{model}");
                     if i == self.model_index {
                         lines.push(Line::from(line).cyan().bold());
                     } else {
-                        lines.push(Line::from(line).into());
+                        lines.push(Line::from(line));
                     }
                 }
 
-                lines.push(Line::from("").into());
+                lines.push(Line::from(""));
                 lines
                     .push(Line::from("Use ↑/↓ to navigate, Enter to select, Esc to go back").dim());
             }
@@ -476,36 +478,38 @@ impl WidgetRef for ConfigSetupWidget {
                     .cloned()
                     .unwrap_or_else(|| "unknown".to_string());
 
-                lines.push(Line::from("Review your configuration:").into());
-                lines.push(Line::from("").into());
-                lines.push(Line::from(format!("  Name: {}", self.config_name)).into());
-                lines.push(Line::from(format!("  Provider: {}", provider_name)).into());
+                lines.push(Line::from("Review your configuration:"));
+                lines.push(Line::from(""));
+                lines.push(Line::from(format!("  Name: {}", self.config_name)));
+                lines.push(Line::from(format!("  Provider: {provider_name}")));
                 if matches!(provider, ProviderType::NewAPI) {
-                    lines.push(Line::from(format!("  Endpoint: {}", self.endpoint)).into());
+                    lines.push(Line::from(format!("  Endpoint: {}", self.endpoint)));
                 }
                 if self.use_env_var {
-                    lines.push(Line::from(format!("  Auth: ${}", self.env_var_name)).into());
+                    lines.push(Line::from(format!("  Auth: ${}", self.env_var_name)));
                 } else {
-                    lines.push(Line::from("  Auth: Direct API key").into());
+                    lines.push(Line::from("  Auth: Direct API key"));
                 }
-                lines.push(Line::from(format!("  Model: {}", model)).into());
-                lines.push(Line::from("").into());
+                lines.push(Line::from(format!("  Model: {model}")));
+                lines.push(Line::from(""));
                 lines.push(Line::from("Press Enter or Y to save, Esc or N to go back").dim());
             }
             ConfigSetupState::Complete => {
                 lines.push(Line::from("Configuration saved!").green().bold());
-                lines.push(Line::from("").into());
-                lines
-                    .push(Line::from(format!("Active configuration: {}", self.config_name)).into());
-                lines.push(Line::from("").into());
+                lines.push(Line::from(""));
+                lines.push(Line::from(format!(
+                    "Active configuration: {}",
+                    self.config_name
+                )));
+                lines.push(Line::from(""));
                 lines.push(Line::from("Press any key to continue...").dim());
             }
         }
 
         // Show error if any
         if let Some(ref error) = self.error {
-            lines.push(Line::from("").into());
-            lines.push(Line::from(format!("Error: {}", error)).fg(Color::Red));
+            lines.push(Line::from(""));
+            lines.push(Line::from(format!("Error: {error}")).fg(Color::Red));
         }
 
         Paragraph::new(lines)

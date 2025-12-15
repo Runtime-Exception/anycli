@@ -269,14 +269,15 @@ mod tests {
     }
 
     #[test]
-    fn model_is_first_suggestion_for_mo() {
+    fn mode_is_first_suggestion_for_mo() {
+        // /mode comes before /model alphabetically when both match /mo
         let mut popup = CommandPopup::new(Vec::new(), false);
         popup.on_composer_text_change("/mo".to_string());
         let matches = popup.filtered_items();
         match matches.first() {
-            Some(CommandItem::Builtin(cmd)) => assert_eq!(cmd.command(), "model"),
+            Some(CommandItem::Builtin(cmd)) => assert_eq!(cmd.command(), "mode"),
             Some(CommandItem::UserPrompt(_)) => {
-                panic!("unexpected prompt ranked before '/model' for '/mo'")
+                panic!("unexpected prompt ranked before '/mode' for '/mo'")
             }
             None => panic!("expected at least one match for '/mo'"),
         }

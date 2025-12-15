@@ -13,6 +13,83 @@ use crate::error::Result;
 use crate::model_provider_info::ModelProviderInfo;
 use crate::model_provider_info::WireApi;
 
+/// Agent execution mode for AnyCLI.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentMode {
+    /// Classic single-agent execution (current default behavior).
+    #[default]
+    Classic,
+    /// Two-phase Alloy Agent (analyze + implement with different models).
+    Alloy,
+}
+
+impl AgentMode {
+    /// Returns the display name for this agent mode.
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            AgentMode::Classic => "Classic Agent",
+            AgentMode::Alloy => "Alloy Agent",
+        }
+    }
+
+    /// Returns a description of this agent mode.
+    pub fn description(&self) -> &'static str {
+        match self {
+            AgentMode::Classic => "Single model handles all tasks",
+            AgentMode::Alloy => "Two-phase: Analyze (GPT) → Implement (Claude)",
+        }
+    }
+}
+
+impl std::fmt::Display for AgentMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.display_name())
+    }
+}
+
+/// Configuration for the Alloy Agent two-phase execution mode.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct AlloyConfig {
+    /// The configuration name for the Analyze Agent.
+    /// Should reference an existing config in the `configs` HashMap.
+    /// Recommended: GPT 5.2 (400k context) for detailed analysis.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub analyze_config: Option<String>,
+
+    /// The configuration name for the Implementation Agent.
+    /// Should reference an existing config in the `configs` HashMap.
+    /// Recommended: Claude Opus 4.5 (200k context) for precise execution.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub implement_config: Option<String>,
+}
+
+impl AlloyConfig {
+    /// Returns true if the Alloy configuration is complete (both agents configured).
+    pub fn is_configured(&self) -> bool {
+        self.analyze_config.is_some() && self.implement_config.is_some()
+    }
+
+    /// Validates the Alloy configuration against available configs.
+    pub fn validate(&self, available_configs: &HashMap<String, ConfigEntry>) -> Result<()> {
+        if let Some(ref analyze) = self.analyze_config
+            && !available_configs.contains_key(analyze)
+        {
+            return Err(CodexErr::Fatal(format!(
+                "Alloy analyze config '{analyze}' does not exist"
+            )));
+        }
+        if let Some(ref implement) = self.implement_config
+            && !available_configs.contains_key(implement)
+        {
+            return Err(CodexErr::Fatal(format!(
+                "Alloy implement config '{implement}' does not exist"
+            )));
+        }
+        Ok(())
+    }
+}
+
 /// The type of AI provider for a configuration entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -105,6 +182,17 @@ pub struct ConfigEntry {
     /// Whether this configuration is enabled.
     #[serde(default = "default_enabled")]
     pub enabled: bool,
+
+    /// Whether to use ChatGPT account authentication (OpenAI only).
+    /// When true, uses the logged-in ChatGPT account instead of an API key.
+    #[serde(default)]
+    pub use_account_auth: bool,
+
+    /// Wire API format override for NewAPI providers.
+    /// Supported values: "openai_chat", "anthropic", "gemini".
+    /// If not specified, defaults based on provider_type.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wire_api: Option<String>,
 }
 
 fn default_enabled() -> bool {
@@ -121,6 +209,8 @@ impl ConfigEntry {
             model,
             reasoning_effort: None,
             enabled: true,
+            use_account_auth: false,
+            wire_api: None,
         }
     }
 
@@ -168,8 +258,14 @@ impl ConfigEntry {
     /// This allows the AnyCLI config to be used with the existing Codex
     /// model provider infrastructure.
     pub fn to_model_provider_info(&self, name: &str) -> ModelProviderInfo {
-        let env_key = self.effective_env_key();
         let is_openai = matches!(self.provider_type, ProviderType::OpenAI);
+
+        // For OpenAI with account auth, don't set env_key so it uses ChatGPT account
+        let env_key = if is_openai && self.use_account_auth {
+            None
+        } else {
+            Some(self.effective_env_key())
+        };
 
         let base_url = if is_openai {
             // Mirror upstream OpenAI provider behavior:
@@ -202,26 +298,43 @@ impl ConfigEntry {
             .collect()
         });
 
+        // For OpenAI: requires_openai_auth is true if using account auth
+        // (otherwise it will use the API key from env_key)
+        let requires_openai_auth = is_openai && self.use_account_auth;
+
+        // Determine wire API: use explicit override if provided, otherwise default for provider
+        let wire_api = self
+            .wire_api
+            .as_ref()
+            .and_then(|w| match w.as_str() {
+                "openai_chat" | "chat" => Some(WireApi::Chat),
+                "openai_responses" | "responses" => Some(WireApi::Responses),
+                "anthropic" => Some(WireApi::Anthropic),
+                "gemini" | "google" => Some(WireApi::Gemini),
+                _ => None,
+            })
+            .unwrap_or_else(|| self.provider_type.wire_api());
+
         ModelProviderInfo {
             name: name.to_string(),
             base_url,
-            env_key: Some(env_key),
+            env_key,
             env_key_instructions: None,
             experimental_bearer_token: None,
-            wire_api: self.provider_type.wire_api(),
+            wire_api,
             query_params: None,
             http_headers,
             env_http_headers,
             request_max_retries: None,
             stream_max_retries: None,
             stream_idle_timeout_ms: None,
-            requires_openai_auth: is_openai,
+            requires_openai_auth,
         }
     }
 }
 
 /// Root configuration structure for AnyCLI.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct AnycliConfig {
     /// The name of the currently active configuration.
     pub active_config: String,
@@ -229,15 +342,14 @@ pub struct AnycliConfig {
     /// Map of configuration names to their entries.
     #[serde(default)]
     pub configs: HashMap<String, ConfigEntry>,
-}
 
-impl Default for AnycliConfig {
-    fn default() -> Self {
-        Self {
-            active_config: String::new(),
-            configs: HashMap::new(),
-        }
-    }
+    /// The current agent execution mode (Classic or Alloy).
+    #[serde(default)]
+    pub agent_mode: AgentMode,
+
+    /// Alloy Agent specific configuration (analyze + implement models).
+    #[serde(default)]
+    pub alloy: AlloyConfig,
 }
 
 impl AnycliConfig {
@@ -317,10 +429,7 @@ impl AnycliConfig {
     /// Sets the active configuration by name.
     pub fn set_active(&mut self, name: &str) -> Result<()> {
         if !self.configs.contains_key(name) {
-            return Err(CodexErr::Fatal(format!(
-                "Configuration '{}' not found",
-                name
-            )));
+            return Err(CodexErr::Fatal(format!("Configuration '{name}' not found")));
         }
         self.active_config = name.to_string();
         Ok(())
@@ -328,7 +437,10 @@ impl AnycliConfig {
 
     /// Returns a list of all configuration names.
     pub fn config_names(&self) -> Vec<&str> {
-        self.configs.keys().map(|s| s.as_str()).collect()
+        self.configs
+            .keys()
+            .map(std::string::String::as_str)
+            .collect()
     }
 
     /// Returns true if this configuration is empty (no configs defined).
@@ -336,12 +448,44 @@ impl AnycliConfig {
         self.configs.is_empty()
     }
 
+    /// Returns true if Alloy Agent mode is active.
+    pub fn is_alloy_mode(&self) -> bool {
+        self.agent_mode == AgentMode::Alloy
+    }
+
+    /// Sets the agent execution mode.
+    pub fn set_agent_mode(&mut self, mode: AgentMode) {
+        self.agent_mode = mode;
+    }
+
+    /// Sets the Alloy Agent configuration.
+    pub fn set_alloy_config(&mut self, analyze_config: String, implement_config: String) {
+        self.alloy.analyze_config = Some(analyze_config);
+        self.alloy.implement_config = Some(implement_config);
+    }
+
+    /// Returns the Alloy analyze configuration entry, if configured.
+    pub fn alloy_analyze_entry(&self) -> Option<&ConfigEntry> {
+        self.alloy
+            .analyze_config
+            .as_ref()
+            .and_then(|name| self.configs.get(name))
+    }
+
+    /// Returns the Alloy implement configuration entry, if configured.
+    pub fn alloy_implement_entry(&self) -> Option<&ConfigEntry> {
+        self.alloy
+            .implement_config
+            .as_ref()
+            .and_then(|name| self.configs.get(name))
+    }
+
     /// Validates all configuration entries.
     pub fn validate(&self) -> Result<()> {
         for (name, entry) in &self.configs {
             entry
                 .validate()
-                .map_err(|e| CodexErr::Fatal(format!("Invalid config '{}': {}", name, e)))?;
+                .map_err(|e| CodexErr::Fatal(format!("Invalid config '{name}': {e}")))?;
         }
 
         // Ensure active_config references a valid entry (if not empty)
@@ -350,6 +494,11 @@ impl AnycliConfig {
                 "Active config '{}' does not exist",
                 self.active_config
             )));
+        }
+
+        // Validate Alloy configuration if in Alloy mode
+        if self.agent_mode == AgentMode::Alloy {
+            self.alloy.validate(&self.configs)?;
         }
 
         Ok(())

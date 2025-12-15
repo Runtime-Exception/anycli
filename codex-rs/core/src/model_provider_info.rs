@@ -190,8 +190,7 @@ impl ModelProviderInfo {
                                 Err(crate::error::CodexErr::EnvVar(EnvVarError {
                                     var: env_key.clone(),
                                     instructions: Some(format!(
-                                        "File exists but is empty: {}",
-                                        file_path
+                                        "File exists but is empty: {file_path}"
                                     )),
                                 }))
                             } else {
@@ -201,8 +200,7 @@ impl ModelProviderInfo {
                         Err(e) => Err(crate::error::CodexErr::EnvVar(EnvVarError {
                             var: env_key.clone(),
                             instructions: Some(format!(
-                                "Failed to read API key from file '{}': {}",
-                                file_path, e
+                                "Failed to read API key from file '{file_path}': {e}"
                             )),
                         })),
                     }

@@ -181,7 +181,7 @@ impl ChatComposer {
         let footer_props = self.footer_props();
         let footer_hint_height = self
             .custom_footer_height()
-            .unwrap_or_else(|| footer_height(footer_props));
+            .unwrap_or_else(|| footer_height(&footer_props));
         let footer_spacing = Self::footer_spacing(footer_hint_height);
         let footer_total_height = footer_hint_height + footer_spacing;
         let popup_constraint = match &self.active_popup {
@@ -1519,6 +1519,21 @@ impl ChatComposer {
     }
 
     fn footer_props(&self) -> FooterProps {
+        // Get agent mode indicator if in AnyCLI mode
+        let agent_mode = if codex_core::anycli::is_anycli_mode() {
+            codex_core::anycli::config::AnycliConfig::load()
+                .ok()
+                .map(|cfg| {
+                    let mode_str = match cfg.agent_mode {
+                        codex_core::anycli::config::AgentMode::Classic => "classic",
+                        codex_core::anycli::config::AgentMode::Alloy => "alloy",
+                    };
+                    mode_str.to_string()
+                })
+        } else {
+            None
+        };
+
         FooterProps {
             mode: self.footer_mode(),
             esc_backtrack_hint: self.esc_backtrack_hint,
@@ -1526,6 +1541,7 @@ impl ChatComposer {
             is_task_running: self.is_task_running,
             context_window_percent: self.context_window_percent,
             context_window_used_tokens: self.context_window_used_tokens,
+            agent_mode,
         }
     }
 
@@ -1743,7 +1759,7 @@ impl Renderable for ChatComposer {
         let footer_props = self.footer_props();
         let footer_hint_height = self
             .custom_footer_height()
-            .unwrap_or_else(|| footer_height(footer_props));
+            .unwrap_or_else(|| footer_height(&footer_props));
         let footer_spacing = Self::footer_spacing(footer_hint_height);
         let footer_total_height = footer_hint_height + footer_spacing;
         const COLS_WITH_MARGIN: u16 = LIVE_PREFIX_COLS + 1;
@@ -1774,7 +1790,7 @@ impl Renderable for ChatComposer {
                 let footer_props = self.footer_props();
                 let custom_height = self.custom_footer_height();
                 let footer_hint_height =
-                    custom_height.unwrap_or_else(|| footer_height(footer_props));
+                    custom_height.unwrap_or_else(|| footer_height(&footer_props));
                 let footer_spacing = Self::footer_spacing(footer_hint_height);
                 let hint_rect = if footer_spacing > 0 && footer_hint_height > 0 {
                     let [_, hint_rect] = Layout::vertical([
@@ -1805,7 +1821,7 @@ impl Renderable for ChatComposer {
                         Line::from(spans).render_ref(custom_rect, buf);
                     }
                 } else {
-                    render_footer(hint_rect, buf, footer_props);
+                    render_footer(hint_rect, buf, &footer_props);
                 }
             }
         }
@@ -1908,7 +1924,8 @@ mod tests {
             false,
         );
 
-        let area = Rect::new(0, 0, 40, 6);
+        // Use a wide enough area to fit the full footer with agent mode indicator
+        let area = Rect::new(0, 0, 70, 6);
         let mut buf = Buffer::empty(area);
         composer.render(area, &mut buf);
 
@@ -1969,7 +1986,7 @@ mod tests {
         );
         setup(&mut composer);
         let footer_props = composer.footer_props();
-        let footer_lines = footer_height(footer_props);
+        let footer_lines = footer_height(&footer_props);
         let footer_spacing = ChatComposer::footer_spacing(footer_lines);
         let height = footer_lines + footer_spacing + 8;
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
@@ -2502,7 +2519,7 @@ mod tests {
     }
 
     #[test]
-    fn slash_popup_model_first_for_mo_ui() {
+    fn slash_popup_mode_first_for_mo_ui() {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
 
@@ -2517,7 +2534,7 @@ mod tests {
             false,
         );
 
-        // Type "/mo" humanlike so paste-burst doesn’t interfere.
+        // Type "/mo" humanlike so paste-burst doesn't interfere.
         type_chars_humanlike(&mut composer, &['/', 'm', 'o']);
 
         let mut terminal = match Terminal::new(TestBackend::new(60, 5)) {
@@ -2528,12 +2545,13 @@ mod tests {
             .draw(|f| composer.render(f.area(), f.buffer_mut()))
             .unwrap_or_else(|e| panic!("Failed to draw composer: {e}"));
 
-        // Visual snapshot should show the slash popup with /model as the first entry.
+        // Visual snapshot should show the slash popup with /mode as the first entry.
         insta::assert_snapshot!("slash_popup_mo", terminal.backend());
     }
 
     #[test]
-    fn slash_popup_model_first_for_mo_logic() {
+    fn slash_popup_mode_first_for_mo_logic() {
+        // /mode comes before /model alphabetically when both match /mo
         use super::super::command_popup::CommandItem;
         let (tx, _rx) = unbounded_channel::<AppEvent>();
         let sender = AppEventSender::new(tx);
@@ -2549,7 +2567,7 @@ mod tests {
         match &composer.active_popup {
             ActivePopup::Command(popup) => match popup.selected_item() {
                 Some(CommandItem::Builtin(cmd)) => {
-                    assert_eq!(cmd.command(), "model")
+                    assert_eq!(cmd.command(), "mode")
                 }
                 Some(CommandItem::UserPrompt(_)) => {
                     panic!("unexpected prompt selected for '/mo'")

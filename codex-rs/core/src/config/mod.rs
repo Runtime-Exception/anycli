@@ -1078,7 +1078,7 @@ impl Config {
                 for (name, entry) in &anycli_config.configs {
                     let provider_info = entry.to_model_provider_info(name);
                     // Use anycli- prefix to avoid conflicts with built-in providers
-                    let provider_key = format!("anycli-{}", name);
+                    let provider_key = format!("anycli-{name}");
                     model_providers.insert(provider_key, provider_info);
                 }
 

@@ -35,6 +35,8 @@ pub(crate) enum TaskKind {
     Regular,
     Review,
     Compact,
+    /// Two-phase Alloy Agent task (analyze + implement).
+    Alloy,
 }
 
 #[derive(Clone)]

@@ -5,5 +5,5 @@ expression: terminal.backend()
 "                                                            "
 "› /mo                                                       "
 "                                                            "
-"  /model    choose what model and reasoning effort to use   "
-"  /mention  mention a file                                  "
+"  /mode   configure agent mode (Classic/Alloy)              "
+"  /model  choose what model and reasoning effort to use     "

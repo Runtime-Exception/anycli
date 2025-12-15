@@ -34,12 +34,24 @@ use super::textarea::TextAreaState;
 pub(crate) enum ConfigInputStep {
     /// Enter the configuration name.
     ConfigName,
+    /// Select auth type (OpenAI only): ChatGPT account or API key.
+    AuthType,
     /// Enter the API key.
     ApiKey,
     /// Enter the endpoint URL (optional for most, required for NewAPI).
     Endpoint,
     /// Enter the model name (for NewAPI only).
     ModelName,
+}
+
+/// Auth type selection for OpenAI configs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum OpenAIAuthType {
+    /// Use ChatGPT account (requires login).
+    #[default]
+    ChatGPTAccount,
+    /// Use API key.
+    ApiKey,
 }
 
 /// Input view for collecting AnyCLI configuration details.
@@ -54,6 +66,7 @@ pub(crate) struct ConfigInputView {
     config_name: String,
     api_key: String,
     endpoint: String,
+    auth_type: OpenAIAuthType,
 
     // UI state
     textarea: TextArea,
@@ -80,6 +93,7 @@ impl ConfigInputView {
             config_name: default_name.to_string(),
             api_key: String::new(),
             endpoint: String::new(),
+            auth_type: OpenAIAuthType::ChatGPTAccount,
             textarea,
             textarea_state: RefCell::new(TextAreaState::default()),
             complete: false,
@@ -89,6 +103,7 @@ impl ConfigInputView {
     fn title(&self) -> &'static str {
         match self.step {
             ConfigInputStep::ConfigName => "Enter configuration name:",
+            ConfigInputStep::AuthType => "Select authentication method:",
             ConfigInputStep::ApiKey => "Enter API key:",
             ConfigInputStep::Endpoint => match self.provider {
                 ProviderType::NewAPI => "Enter API endpoint URL (required):",
@@ -101,6 +116,7 @@ impl ConfigInputView {
     fn placeholder(&self) -> &'static str {
         match self.step {
             ConfigInputStep::ConfigName => "e.g., my-anthropic-config",
+            ConfigInputStep::AuthType => "", // Not used for selection
             ConfigInputStep::ApiKey => "sk-... or your API key",
             ConfigInputStep::Endpoint => "https://api.example.com",
             ConfigInputStep::ModelName => "e.g., claude-sonnet-4-5-20250929",
@@ -126,9 +142,19 @@ impl ConfigInputView {
                     return; // Name is required
                 }
                 self.config_name = current_text;
-                self.step = ConfigInputStep::ApiKey;
-                self.textarea = TextArea::new();
-                self.textarea_state = RefCell::new(TextAreaState::default());
+
+                // For OpenAI, show auth type selection; for others, go straight to API key
+                if matches!(self.provider, ProviderType::OpenAI) {
+                    self.step = ConfigInputStep::AuthType;
+                } else {
+                    self.step = ConfigInputStep::ApiKey;
+                    self.textarea = TextArea::new();
+                    self.textarea_state = RefCell::new(TextAreaState::default());
+                }
+            }
+            ConfigInputStep::AuthType => {
+                // This step is handled by confirm_auth_type_selection()
+                // Enter key should call that method instead
             }
             ConfigInputStep::ApiKey => {
                 if current_text.is_empty() {
@@ -165,11 +191,43 @@ impl ConfigInputView {
         }
     }
 
+    /// Confirms the auth type selection and advances to the next step.
+    fn confirm_auth_type_selection(&mut self) {
+        match self.auth_type {
+            OpenAIAuthType::ChatGPTAccount => {
+                // Start ChatGPT login flow - this will open browser for auth
+                // After login completes, App will handle model selection
+                self.app_event_tx
+                    .send(AppEvent::StartOpenAIChatGPTConfigLogin {
+                        config_name: self.config_name.clone(),
+                    });
+                self.complete = true; // Close this view, App takes over
+            }
+            OpenAIAuthType::ApiKey => {
+                // Go to API key entry
+                self.step = ConfigInputStep::ApiKey;
+                self.textarea = TextArea::new();
+                self.textarea_state = RefCell::new(TextAreaState::default());
+            }
+        }
+    }
+
+    /// Toggles the auth type selection.
+    fn toggle_auth_type(&mut self) {
+        self.auth_type = match self.auth_type {
+            OpenAIAuthType::ChatGPTAccount => OpenAIAuthType::ApiKey,
+            OpenAIAuthType::ApiKey => OpenAIAuthType::ChatGPTAccount,
+        };
+    }
+
     fn save_config_with_model_selection(&mut self) {
+        let use_account_auth = matches!(self.auth_type, OpenAIAuthType::ChatGPTAccount)
+            && matches!(self.provider, ProviderType::OpenAI);
+
         // Send event to open model selection popup
         self.app_event_tx
             .send(AppEvent::OpenConfigModelSelectWithKey {
-                provider: self.provider.clone(),
+                provider: self.provider,
                 config_name: self.config_name.clone(),
                 api_key: self.api_key.clone(),
                 endpoint: if self.endpoint.is_empty() {
@@ -177,14 +235,18 @@ impl ConfigInputView {
                 } else {
                     Some(self.endpoint.clone())
                 },
+                use_account_auth,
             });
         self.complete = true;
     }
 
     fn save_config_with_model(&mut self, model: String) {
+        let use_account_auth = matches!(self.auth_type, OpenAIAuthType::ChatGPTAccount)
+            && matches!(self.provider, ProviderType::OpenAI);
+
         self.app_event_tx
             .send(AppEvent::SaveNewAnycliConfigComplete {
-                provider: self.provider.clone(),
+                provider: self.provider,
                 config_name: self.config_name.clone(),
                 api_key: self.api_key.clone(),
                 endpoint: if self.endpoint.is_empty() {
@@ -193,6 +255,7 @@ impl ConfigInputView {
                     Some(self.endpoint.clone())
                 },
                 model,
+                use_account_auth,
             });
         self.complete = true;
     }
@@ -224,6 +287,30 @@ fn gutter() -> Span<'static> {
 
 impl BottomPaneView for ConfigInputView {
     fn handle_key_event(&mut self, key_event: KeyEvent) {
+        // Handle auth type selection step specially
+        if matches!(self.step, ConfigInputStep::AuthType) {
+            match key_event.code {
+                KeyCode::Esc => {
+                    self.on_ctrl_c();
+                }
+                KeyCode::Enter => {
+                    self.confirm_auth_type_selection();
+                }
+                KeyCode::Up | KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('k') => {
+                    self.toggle_auth_type();
+                }
+                KeyCode::Char('1') => {
+                    self.auth_type = OpenAIAuthType::ChatGPTAccount;
+                }
+                KeyCode::Char('2') => {
+                    self.auth_type = OpenAIAuthType::ApiKey;
+                }
+                _ => {}
+            }
+            return;
+        }
+
+        // Normal text input steps
         match key_event {
             KeyEvent {
                 code: KeyCode::Esc, ..
@@ -263,10 +350,20 @@ impl BottomPaneView for ConfigInputView {
 
 impl Renderable for ConfigInputView {
     fn desired_height(&self, width: u16) -> u16 {
-        2u16 + self.input_height(width) + 2u16
+        if matches!(self.step, ConfigInputStep::AuthType) {
+            // Provider + title + 2 options + hint line
+            2u16 + 3u16 + 2u16
+        } else {
+            2u16 + self.input_height(width) + 2u16
+        }
     }
 
     fn cursor_pos(&self, area: Rect) -> Option<(u16, u16)> {
+        // No cursor for auth type selection step
+        if matches!(self.step, ConfigInputStep::AuthType) {
+            return None;
+        }
+
         if area.height < 2 || area.width <= 2 {
             return None;
         }
@@ -290,8 +387,6 @@ impl Renderable for ConfigInputView {
             return;
         }
 
-        let input_height = self.input_height(area.width);
-
         // Provider line
         let provider_area = Rect {
             x: area.x,
@@ -312,6 +407,14 @@ impl Renderable for ConfigInputView {
         };
         Paragraph::new(Line::from(vec![gutter(), Span::from(self.title())]))
             .render(title_area, buf);
+
+        // Handle auth type selection specially
+        if matches!(self.step, ConfigInputStep::AuthType) {
+            self.render_auth_type_selection(area, buf);
+            return;
+        }
+
+        let input_height = self.input_height(area.width);
 
         // Input area
         let input_area = Rect {
@@ -380,6 +483,87 @@ impl Renderable for ConfigInputView {
         let hint_y = input_area.y.saturating_add(input_height).saturating_add(1);
         if hint_y < area.y.saturating_add(area.height) {
             Paragraph::new(standard_popup_hint_line()).render(
+                Rect {
+                    x: area.x,
+                    y: hint_y,
+                    width: area.width,
+                    height: 1,
+                },
+                buf,
+            );
+        }
+    }
+}
+
+impl ConfigInputView {
+    /// Renders the auth type selection options.
+    fn render_auth_type_selection(&self, area: Rect, buf: &mut Buffer) {
+        let base_y = area.y.saturating_add(2);
+
+        // Option 1: ChatGPT Account
+        let option1_selected = matches!(self.auth_type, OpenAIAuthType::ChatGPTAccount);
+        let option1_line = if option1_selected {
+            Line::from(vec![
+                gutter(),
+                "▸ ".cyan(),
+                "1. ".cyan(),
+                "ChatGPT Account".bold().cyan(),
+                " (recommended)".dim(),
+            ])
+        } else {
+            Line::from(vec![
+                gutter(),
+                "  ".into(),
+                "1. ".into(),
+                "ChatGPT Account".into(),
+                " (recommended)".dim(),
+            ])
+        };
+        Paragraph::new(option1_line).render(
+            Rect {
+                x: area.x,
+                y: base_y,
+                width: area.width,
+                height: 1,
+            },
+            buf,
+        );
+
+        // Option 2: API Key
+        let option2_selected = matches!(self.auth_type, OpenAIAuthType::ApiKey);
+        let option2_line = if option2_selected {
+            Line::from(vec![
+                gutter(),
+                "▸ ".cyan(),
+                "2. ".cyan(),
+                "API Key".bold().cyan(),
+            ])
+        } else {
+            Line::from(vec![gutter(), "  ".into(), "2. ".into(), "API Key".into()])
+        };
+        Paragraph::new(option2_line).render(
+            Rect {
+                x: area.x,
+                y: base_y.saturating_add(1),
+                width: area.width,
+                height: 1,
+            },
+            buf,
+        );
+
+        // Hint line
+        let hint_y = base_y.saturating_add(3);
+        if hint_y < area.y.saturating_add(area.height) {
+            let hint_line = Line::from(vec![
+                gutter(),
+                "↑↓".dim(),
+                " select  ".dim(),
+                "enter".dim(),
+                " confirm  ".dim(),
+                "esc".dim(),
+                " cancel".dim(),
+            ]);
+            Paragraph::new(hint_line).render(
                 Rect {
                     x: area.x,
                     y: hint_y,

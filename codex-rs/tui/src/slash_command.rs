@@ -15,6 +15,7 @@ pub enum SlashCommand {
     Model,
     Switch,
     Config,
+    Mode,
     Approvals,
     Skills,
     Review,
@@ -54,6 +55,7 @@ impl SlashCommand {
             SlashCommand::Model => "choose what model and reasoning effort to use",
             SlashCommand::Switch => "switch between provider configurations",
             SlashCommand::Config => "add a new provider configuration",
+            SlashCommand::Mode => "configure agent mode (Classic/Alloy)",
             SlashCommand::Approvals => "choose what Codex can do without approval",
             SlashCommand::Mcp => "list configured MCP tools",
             SlashCommand::Logout => "log out of Codex",
@@ -79,6 +81,7 @@ impl SlashCommand {
             | SlashCommand::Model
             | SlashCommand::Switch
             | SlashCommand::Config
+            | SlashCommand::Mode
             | SlashCommand::Approvals
             | SlashCommand::Review
             | SlashCommand::Logout => false,

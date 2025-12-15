@@ -1546,6 +1546,9 @@ impl ChatWidget {
             SlashCommand::Config => {
                 self.open_config_add_popup();
             }
+            SlashCommand::Mode => {
+                self.open_mode_popup();
+            }
             SlashCommand::Approvals => {
                 self.open_approvals_popup();
             }
@@ -2236,7 +2239,7 @@ impl ChatWidget {
         let config = match anycli::config::AnycliConfig::load() {
             Ok(c) => c,
             Err(e) => {
-                self.add_info_message(format!("Failed to load AnyCLI config: {}", e), None);
+                self.add_info_message(format!("Failed to load AnyCLI config: {e}"), None);
                 return;
             }
         };
@@ -2252,8 +2255,8 @@ impl ChatWidget {
             }
         };
 
-        let provider = active_entry.provider_type.clone();
-        let models = models_for_provider(provider.clone());
+        let provider = active_entry.provider_type;
+        let models = models_for_provider(provider);
 
         // For NewAPI provider, show a message that models need to be manually configured
         if matches!(provider, ProviderType::NewAPI) && models.is_empty() {
@@ -2295,7 +2298,7 @@ impl ChatWidget {
         }
 
         self.bottom_pane.show_selection_view(SelectionViewParams {
-            title: Some(format!("Select {} Model", provider_name)),
+            title: Some(format!("Select {provider_name} Model")),
             subtitle: Some(format!(
                 "Current config: {} | Use /switch to change provider",
                 config.active_config
@@ -2323,7 +2326,7 @@ impl ChatWidget {
         let config = match anycli::config::AnycliConfig::load() {
             Ok(c) => c,
             Err(e) => {
-                self.add_info_message(format!("Failed to load AnyCLI config: {}", e), None);
+                self.add_info_message(format!("Failed to load AnyCLI config: {e}"), None);
                 return;
             }
         };
@@ -2381,6 +2384,203 @@ impl ChatWidget {
         });
     }
 
+    /// Open a popup to configure the agent execution mode (Classic/Alloy).
+    /// Step 1: Select mode type. If Alloy is selected, proceeds to model selection.
+    pub(crate) fn open_mode_popup(&mut self) {
+        use codex_core::anycli;
+        use codex_core::anycli::config::AgentMode;
+
+        // Check if AnyCLI mode is enabled
+        if !anycli::is_anycli_mode() {
+            self.add_info_message(
+                "AnyCLI mode is not enabled. Create ~/.anycli/config.toml to enable multi-provider support.".to_string(),
+                None,
+            );
+            return;
+        }
+
+        // Load AnyCLI config to get current mode
+        let config = match anycli::config::AnycliConfig::load() {
+            Ok(c) => c,
+            Err(e) => {
+                self.add_info_message(format!("Failed to load AnyCLI config: {e}"), None);
+                return;
+            }
+        };
+
+        let current_mode = config.agent_mode;
+        let mut items: Vec<SelectionItem> = Vec::new();
+
+        // Classic Agent option
+        let is_classic_current = current_mode == AgentMode::Classic;
+        items.push(SelectionItem {
+            name: "Classic Agent".to_string(),
+            description: Some("Single model handles all tasks (default)".to_string()),
+            is_current: is_classic_current,
+            actions: vec![Box::new(move |tx| {
+                tx.send(AppEvent::SwitchAgentMode {
+                    mode: AgentMode::Classic,
+                });
+            })],
+            dismiss_on_select: true,
+            ..Default::default()
+        });
+
+        // Alloy Agent option
+        let is_alloy_current = current_mode == AgentMode::Alloy;
+        let alloy_description = if config.alloy.is_configured() {
+            format!(
+                "Two-phase: {} (analyze) → {} (implement)",
+                config.alloy.analyze_config.as_deref().unwrap_or("?"),
+                config.alloy.implement_config.as_deref().unwrap_or("?")
+            )
+        } else {
+            "Two-phase: Analyze (GPT) → Implement (Claude)".to_string()
+        };
+
+        items.push(SelectionItem {
+            name: "Alloy Agent".to_string(),
+            description: Some(alloy_description),
+            is_current: is_alloy_current,
+            actions: vec![Box::new(move |tx| {
+                // If selecting Alloy, need to configure analyze and implement models
+                tx.send(AppEvent::OpenAlloyAnalyzeModelSelect);
+            })],
+            dismiss_on_select: true,
+            ..Default::default()
+        });
+
+        self.bottom_pane.show_selection_view(SelectionViewParams {
+            title: Some("Agent Mode".to_string()),
+            subtitle: Some("Choose how tasks are executed".to_string()),
+            footer_hint: Some("Press enter to select, or esc to dismiss.".into()),
+            items,
+            ..Default::default()
+        });
+    }
+
+    /// Open a popup to select the Analyze model for Alloy Agent.
+    /// Step 2 of /mode when Alloy is selected.
+    pub(crate) fn open_alloy_analyze_model_select(&mut self) {
+        use codex_core::anycli;
+
+        let config = match anycli::config::AnycliConfig::load() {
+            Ok(c) => c,
+            Err(e) => {
+                self.add_info_message(format!("Failed to load AnyCLI config: {e}"), None);
+                return;
+            }
+        };
+
+        let current_analyze = config.alloy.analyze_config.clone();
+        let mut items: Vec<SelectionItem> = Vec::new();
+
+        for (name, entry) in config.configs.iter() {
+            if !entry.enabled {
+                continue;
+            }
+
+            let provider_name = entry.provider_type.display_name();
+            let description = Some(format!("{} - {}", provider_name, entry.model));
+            let is_current = current_analyze.as_ref() == Some(name);
+            let config_name = name.clone();
+
+            let actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
+                tx.send(AppEvent::OpenAlloyImplementModelSelect {
+                    analyze_config: config_name.clone(),
+                });
+            })];
+
+            items.push(SelectionItem {
+                name: name.clone(),
+                description,
+                is_current,
+                actions,
+                dismiss_on_select: true,
+                ..Default::default()
+            });
+        }
+
+        if items.is_empty() {
+            self.add_info_message(
+                "No configurations available. Use /config to add providers first.".to_string(),
+                None,
+            );
+            return;
+        }
+
+        self.bottom_pane.show_selection_view(SelectionViewParams {
+            title: Some("Alloy: Select Analyze Model".to_string()),
+            subtitle: Some("Recommended: GPT 5.2 (400k context) for detailed analysis".to_string()),
+            footer_hint: Some("Press enter to select analyze model.".into()),
+            items,
+            ..Default::default()
+        });
+    }
+
+    /// Open a popup to select the Implementation model for Alloy Agent.
+    /// Step 3 of /mode when Alloy is selected.
+    pub(crate) fn open_alloy_implement_model_select(&mut self, analyze_config: String) {
+        use codex_core::anycli;
+
+        let config = match anycli::config::AnycliConfig::load() {
+            Ok(c) => c,
+            Err(e) => {
+                self.add_info_message(format!("Failed to load AnyCLI config: {e}"), None);
+                return;
+            }
+        };
+
+        let current_implement = config.alloy.implement_config.clone();
+        let mut items: Vec<SelectionItem> = Vec::new();
+
+        for (name, entry) in config.configs.iter() {
+            if !entry.enabled {
+                continue;
+            }
+
+            let provider_name = entry.provider_type.display_name();
+            let description = Some(format!("{} - {}", provider_name, entry.model));
+            let is_current = current_implement.as_ref() == Some(name);
+            let config_name = name.clone();
+            let analyze_config_clone = analyze_config.clone();
+
+            let actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
+                tx.send(AppEvent::SaveAlloyConfig {
+                    analyze_config: analyze_config_clone.clone(),
+                    implement_config: config_name.clone(),
+                });
+            })];
+
+            items.push(SelectionItem {
+                name: name.clone(),
+                description,
+                is_current,
+                actions,
+                dismiss_on_select: true,
+                ..Default::default()
+            });
+        }
+
+        if items.is_empty() {
+            self.add_info_message(
+                "No configurations available. Use /config to add providers first.".to_string(),
+                None,
+            );
+            return;
+        }
+
+        self.bottom_pane.show_selection_view(SelectionViewParams {
+            title: Some("Alloy: Select Implementation Model".to_string()),
+            subtitle: Some(
+                "Recommended: Claude Opus 4.5 (200k context) for precise execution".to_string(),
+            ),
+            footer_hint: Some("Press enter to save Alloy configuration.".into()),
+            items,
+            ..Default::default()
+        });
+    }
+
     /// Open a popup to add a new AnyCLI provider configuration.
     /// Step 1: Select the provider type, then show text input for API key/endpoint.
     pub(crate) fn open_config_add_popup(&mut self) {
@@ -2407,11 +2607,11 @@ impl ChatWidget {
 
         let mut items: Vec<SelectionItem> = Vec::new();
         for (provider_type, name, description) in providers {
-            let provider_clone = provider_type.clone();
+            let provider_clone = provider_type;
             // After selecting provider, show text input for API key/endpoint
             let actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
                 tx.send(AppEvent::OpenConfigModelSelect {
-                    provider: provider_clone.clone(),
+                    provider: provider_clone,
                 });
             })];
             items.push(SelectionItem {
@@ -2462,11 +2662,12 @@ impl ChatWidget {
         config_name: String,
         api_key: String,
         endpoint: Option<String>,
+        use_account_auth: bool,
     ) {
         use codex_core::anycli::config::ProviderType;
         use codex_core::anycli::models::models_for_provider;
 
-        let models = models_for_provider(provider.clone());
+        let models = models_for_provider(provider);
         let provider_name = match &provider {
             ProviderType::OpenAI => "OpenAI",
             ProviderType::Anthropic => "Anthropic",
@@ -2476,7 +2677,7 @@ impl ChatWidget {
 
         if models.is_empty() {
             self.add_info_message(
-                format!("No models available for {} provider", provider_name),
+                format!("No models available for {provider_name} provider"),
                 None,
             );
             return;
@@ -2485,17 +2686,18 @@ impl ChatWidget {
         let mut items: Vec<SelectionItem> = Vec::new();
         for model_info in models {
             let model_id = model_info.id.to_string();
-            let provider_clone = provider.clone();
+            let provider_clone = provider;
             let config_name_clone = config_name.clone();
             let api_key_clone = api_key.clone();
             let endpoint_clone = endpoint.clone();
             let actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
                 tx.send(AppEvent::SaveNewAnycliConfigComplete {
-                    provider: provider_clone.clone(),
+                    provider: provider_clone,
                     config_name: config_name_clone.clone(),
                     api_key: api_key_clone.clone(),
                     endpoint: endpoint_clone.clone(),
                     model: model_id.clone(),
+                    use_account_auth,
                 });
             })];
             items.push(SelectionItem {
@@ -2509,7 +2711,7 @@ impl ChatWidget {
         }
 
         self.bottom_pane.show_selection_view(SelectionViewParams {
-            title: Some(format!("Add {} Configuration", provider_name)),
+            title: Some(format!("Add {provider_name} Configuration")),
             subtitle: Some("Select a model to complete configuration".to_string()),
             footer_hint: Some("Press enter to save config, or esc to cancel.".into()),
             items,

@@ -768,22 +768,29 @@ impl Session {
         sub_id: String,
         updates: SessionSettingsUpdate,
     ) -> Arc<TurnContext> {
-        let anycli_provider_override = if crate::anycli::is_anycli_mode() {
-            crate::anycli::AnycliConfig::load().ok().and_then(|cfg| {
-                let active_name = cfg.active_config.clone();
-                cfg.active_entry()
-                    .map(|entry| entry.to_model_provider_info(&active_name))
-            })
-        } else {
-            None
-        };
-
         let session_configuration = {
             let mut state = self.state.lock().await;
             let mut session_configuration = state.session_configuration.clone().apply(&updates);
-            if let Some(provider) = anycli_provider_override {
+
+            // Only apply AnyCLI provider override for top-level sessions, not sub-agents.
+            // Sub-agents (like Alloy's analyze/implement phases) are spawned with a specific
+            // provider configuration that should not be overridden by the active AnyCLI config.
+            let is_sub_agent = matches!(
+                session_configuration.session_source,
+                SessionSource::SubAgent(_)
+            );
+
+            if !is_sub_agent
+                && crate::anycli::is_anycli_mode()
+                && let Some(provider) = crate::anycli::AnycliConfig::load().ok().and_then(|cfg| {
+                    let active_name = cfg.active_config.clone();
+                    cfg.active_entry()
+                        .map(|entry| entry.to_model_provider_info(&active_name))
+                })
+            {
                 session_configuration.provider = provider;
             }
+
             state.session_configuration = session_configuration.clone();
             session_configuration
         };
@@ -1605,6 +1612,7 @@ mod handlers {
     use codex_protocol::protocol::Op;
     use codex_protocol::protocol::ReviewDecision;
     use codex_protocol::protocol::ReviewRequest;
+    use codex_protocol::protocol::SessionSource;
     use codex_protocol::protocol::TurnAbortReason;
     use codex_protocol::protocol::WarningEvent;
 
@@ -1671,8 +1679,32 @@ mod handlers {
                     .await;
             }
 
-            sess.spawn_task(Arc::clone(&current_context), items, RegularTask)
+            // Check if Alloy mode is active and spawn appropriate task.
+            // IMPORTANT: Sub-agents (like Alloy's analyze/implement phases) should NOT
+            // trigger Alloy mode - they should run as regular tasks to avoid infinite recursion.
+            let is_sub_agent = matches!(
+                current_context.client.get_session_source(),
+                SessionSource::SubAgent(_)
+            );
+
+            let alloy_config = (!is_sub_agent && crate::anycli::is_anycli_mode())
+                .then(|| crate::anycli::config::AnycliConfig::load().ok())
+                .flatten()
+                .filter(|cfg| cfg.is_alloy_mode() && cfg.alloy.is_configured());
+
+            if let Some(cfg) = alloy_config {
+                let analyze = cfg.alloy.analyze_config.clone().unwrap_or_default();
+                let implement = cfg.alloy.implement_config.clone().unwrap_or_default();
+                sess.spawn_task(
+                    Arc::clone(&current_context),
+                    items,
+                    crate::tasks::AlloyTask::new(analyze, implement),
+                )
                 .await;
+            } else {
+                sess.spawn_task(Arc::clone(&current_context), items, RegularTask)
+                    .await;
+            }
             *previous_context = Some(current_context);
         }
     }

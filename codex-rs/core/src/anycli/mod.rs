@@ -47,12 +47,12 @@ pub fn is_anycli_mode() -> bool {
     }
 
     // Check for a valid AnyCLI config file with at least one entry
-    if let Some(config_path) = anycli_config_path() {
-        if config_path.exists() {
-            // Try to load and validate the config
-            if let Ok(config) = config::AnycliConfig::load() {
-                return !config.configs.is_empty();
-            }
+    if let Some(config_path) = anycli_config_path()
+        && config_path.exists()
+    {
+        // Try to load and validate the config
+        if let Ok(config) = config::AnycliConfig::load() {
+            return !config.configs.is_empty();
         }
     }
 

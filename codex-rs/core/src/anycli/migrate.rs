@@ -59,14 +59,14 @@ pub fn migrate_from_codex() -> Result<Option<AnycliConfig>> {
     let mut openai_entry = ConfigEntry::new(ProviderType::OpenAI, model);
 
     // Check for API key environment variable customization
-    if let Some(providers) = codex_toml.get("model_providers") {
-        if let Some(openai) = providers.get("openai") {
-            if let Some(env_key) = openai.get("env_key").and_then(|v| v.as_str()) {
-                openai_entry.env_key = Some(env_key.to_string());
-            }
-            if let Some(base_url) = openai.get("base_url").and_then(|v| v.as_str()) {
-                openai_entry.endpoint = Some(base_url.to_string());
-            }
+    if let Some(providers) = codex_toml.get("model_providers")
+        && let Some(openai) = providers.get("openai")
+    {
+        if let Some(env_key) = openai.get("env_key").and_then(|v| v.as_str()) {
+            openai_entry.env_key = Some(env_key.to_string());
+        }
+        if let Some(base_url) = openai.get("base_url").and_then(|v| v.as_str()) {
+            openai_entry.endpoint = Some(base_url.to_string());
         }
     }
 
@@ -98,10 +98,10 @@ pub fn migrate_from_codex() -> Result<Option<AnycliConfig>> {
 pub fn ensure_anycli_config() -> Result<AnycliConfig> {
     // First, try to load existing AnyCLI config
     let anycli_path = super::anycli_config_path();
-    if let Some(path) = &anycli_path {
-        if path.exists() {
-            return AnycliConfig::load_from_path(path);
-        }
+    if let Some(path) = &anycli_path
+        && path.exists()
+    {
+        return AnycliConfig::load_from_path(path);
     }
 
     // No AnyCLI config exists, try to migrate from Codex
@@ -143,7 +143,6 @@ impl MigrationStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
 
     #[test]
     fn test_migration_status_empty() {

@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use codex_common::approval_presets::ApprovalPreset;
+use codex_core::anycli::config::AgentMode;
 use codex_core::protocol::ConversationPathResponseEvent;
 use codex_core::protocol::Event;
 use codex_core::protocol::RateLimitSnapshot;
@@ -73,20 +74,14 @@ pub(crate) enum AppEvent {
         provider: codex_core::anycli::config::ProviderType,
     },
 
-    /// Save a new AnyCLI configuration.
-    SaveNewAnycliConfig {
-        provider: codex_core::anycli::config::ProviderType,
-        model: String,
-        config_name: String,
-        env_key: String,
-    },
-
     /// Open the model selection popup for a new AnyCLI config with API key already collected.
     OpenConfigModelSelectWithKey {
         provider: codex_core::anycli::config::ProviderType,
         config_name: String,
         api_key: String,
         endpoint: Option<String>,
+        /// Whether to use ChatGPT account auth instead of API key (OpenAI only).
+        use_account_auth: bool,
     },
 
     /// Save a new AnyCLI configuration with all details collected.
@@ -96,6 +91,39 @@ pub(crate) enum AppEvent {
         api_key: String,
         endpoint: Option<String>,
         model: String,
+        /// Whether to use ChatGPT account auth instead of API key (OpenAI only).
+        use_account_auth: bool,
+    },
+
+    /// Start ChatGPT login flow for a new OpenAI config.
+    /// After successful login, proceeds to model selection with use_account_auth=true.
+    StartOpenAIChatGPTConfigLogin {
+        config_name: String,
+    },
+
+    /// ChatGPT login completed successfully for config creation.
+    /// Proceeds to model selection with use_account_auth=true.
+    ChatGPTConfigLoginComplete {
+        config_name: String,
+    },
+
+    /// Switch agent execution mode (Classic/Alloy).
+    SwitchAgentMode {
+        mode: AgentMode,
+    },
+
+    /// Open the Alloy analyze model selection popup (step 2 of /mode).
+    OpenAlloyAnalyzeModelSelect,
+
+    /// Open the Alloy implement model selection popup (step 3 of /mode).
+    OpenAlloyImplementModelSelect {
+        analyze_config: String,
+    },
+
+    /// Save the complete Alloy Agent configuration.
+    SaveAlloyConfig {
+        analyze_config: String,
+        implement_config: String,
     },
 
     /// Persist the selected model and reasoning effort to the appropriate config.

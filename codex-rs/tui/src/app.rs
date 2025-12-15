@@ -23,6 +23,7 @@ use codex_ansi_escape::ansi_escape_line;
 use codex_app_server_protocol::AuthMode;
 use codex_core::AuthManager;
 use codex_core::ConversationManager;
+use codex_core::auth::CLIENT_ID;
 use codex_core::config::Config;
 use codex_core::config::edit::ConfigEditsBuilder;
 use codex_core::features::Feature;
@@ -36,6 +37,8 @@ use codex_core::protocol::SessionSource;
 use codex_core::protocol::TokenUsage;
 use codex_core::skills::load_skills;
 use codex_core::skills::model::SkillMetadata;
+use codex_login::ServerOptions;
+use codex_login::run_login_server;
 use codex_protocol::ConversationId;
 use codex_protocol::openai_models::ModelPreset;
 use codex_protocol::openai_models::ModelUpgrade;
@@ -58,8 +61,7 @@ use std::time::Duration;
 use tokio::select;
 use tokio::sync::mpsc::unbounded_channel;
 
-#[cfg(not(debug_assertions))]
-use crate::history_cell::UpdateAvailableHistoryCell;
+// UpdateAvailableHistoryCell import removed - update checker disabled for AnyCLI fork
 
 const GPT_5_1_MIGRATION_AUTH_MODES: [AuthMode; 2] = [AuthMode::ChatGPT, AuthMode::ApiKey];
 const GPT_5_1_CODEX_MIGRATION_AUTH_MODES: [AuthMode; 2] = [AuthMode::ChatGPT, AuthMode::ApiKey];
@@ -360,8 +362,7 @@ impl App {
         chat_widget.maybe_prompt_windows_sandbox_enable();
 
         let file_search = FileSearchManager::new(config.cwd.clone(), app_event_tx.clone());
-        #[cfg(not(debug_assertions))]
-        let upgrade_version = crate::updates::get_upgrade_version(&config);
+        // Update checker disabled for AnyCLI fork
 
         let mut app = Self {
             server: conversation_manager.clone(),
@@ -409,17 +410,7 @@ impl App {
             }
         }
 
-        #[cfg(not(debug_assertions))]
-        if let Some(latest_version) = upgrade_version {
-            app.handle_event(
-                tui,
-                AppEvent::InsertHistoryCell(Box::new(UpdateAvailableHistoryCell::new(
-                    latest_version,
-                    crate::update_action::get_update_action(),
-                ))),
-            )
-            .await?;
-        }
+        // Update checker banner disabled for AnyCLI fork
 
         let tui_events = tui.event_stream();
         tokio::pin!(tui_events);
@@ -703,26 +694,19 @@ impl App {
             AppEvent::OpenConfigModelSelect { provider } => {
                 self.chat_widget.open_config_model_select(provider);
             }
-            AppEvent::SaveNewAnycliConfig {
-                provider,
-                model,
-                config_name,
-                env_key,
-            } => {
-                self.on_save_new_anycli_config(provider, model, config_name, env_key)
-                    .await;
-            }
             AppEvent::OpenConfigModelSelectWithKey {
                 provider,
                 config_name,
                 api_key,
                 endpoint,
+                use_account_auth,
             } => {
                 self.chat_widget.open_config_model_select_with_key(
                     provider,
                     config_name,
                     api_key,
                     endpoint,
+                    use_account_auth,
                 );
             }
             AppEvent::SaveNewAnycliConfigComplete {
@@ -731,6 +715,7 @@ impl App {
                 api_key,
                 endpoint,
                 model,
+                use_account_auth,
             } => {
                 self.on_save_new_anycli_config_complete(
                     provider,
@@ -738,8 +723,32 @@ impl App {
                     api_key,
                     endpoint,
                     model,
+                    use_account_auth,
                 )
                 .await;
+            }
+            AppEvent::StartOpenAIChatGPTConfigLogin { config_name } => {
+                self.start_chatgpt_config_login(config_name);
+            }
+            AppEvent::ChatGPTConfigLoginComplete { config_name } => {
+                self.on_chatgpt_config_login_complete(config_name);
+            }
+            AppEvent::SwitchAgentMode { mode } => {
+                self.on_switch_agent_mode(mode).await;
+            }
+            AppEvent::OpenAlloyAnalyzeModelSelect => {
+                self.chat_widget.open_alloy_analyze_model_select();
+            }
+            AppEvent::OpenAlloyImplementModelSelect { analyze_config } => {
+                self.chat_widget
+                    .open_alloy_implement_model_select(analyze_config);
+            }
+            AppEvent::SaveAlloyConfig {
+                analyze_config,
+                implement_config,
+            } => {
+                self.on_save_alloy_config(analyze_config, implement_config)
+                    .await;
             }
             AppEvent::OpenReasoningPopup { model } => {
                 self.chat_widget.open_reasoning_popup(model);
@@ -1074,7 +1083,7 @@ impl App {
             Ok(c) => c,
             Err(e) => {
                 self.chat_widget
-                    .add_error_message(format!("Failed to load AnyCLI config: {}", e));
+                    .add_error_message(format!("Failed to load AnyCLI config: {e}"));
                 return;
             }
         };
@@ -1084,7 +1093,7 @@ impl App {
             Some(e) => e.clone(),
             None => {
                 self.chat_widget
-                    .add_error_message(format!("Configuration '{}' not found", config_name));
+                    .add_error_message(format!("Configuration '{config_name}' not found"));
                 return;
             }
         };
@@ -1093,7 +1102,7 @@ impl App {
         anycli_config.active_config = config_name.to_string();
         if let Err(e) = anycli_config.save() {
             self.chat_widget
-                .add_error_message(format!("Failed to save AnyCLI config: {}", e));
+                .add_error_message(format!("Failed to save AnyCLI config: {e}"));
             return;
         }
 
@@ -1132,78 +1141,79 @@ impl App {
         );
     }
 
-    async fn on_save_new_anycli_config(
-        &mut self,
-        provider: codex_core::anycli::config::ProviderType,
-        model: String,
-        base_config_name: String,
-        env_key: String,
-    ) {
-        use codex_core::anycli;
+    async fn on_switch_agent_mode(&mut self, mode: codex_core::anycli::config::AgentMode) {
+        use codex_core::anycli::config::AgentMode;
         use codex_core::anycli::config::AnycliConfig;
-        use codex_core::anycli::config::ConfigEntry;
 
-        // Ensure the AnyCLI directory exists
-        if let Err(e) = anycli::ensure_anycli_dir() {
-            self.chat_widget
-                .add_error_message(format!("Failed to create AnyCLI config directory: {}", e));
-            return;
-        }
-
-        // Load existing config or create new one
-        let mut anycli_config = AnycliConfig::load().unwrap_or_default();
-
-        // Generate a unique config name
-        let mut config_name = base_config_name.clone();
-        let mut counter = 1;
-        while anycli_config.configs.contains_key(&config_name) {
-            counter += 1;
-            config_name = format!("{}-{}", base_config_name, counter);
-        }
-
-        // Create the new entry
-        let entry = ConfigEntry {
-            provider_type: provider.clone(),
-            endpoint: None,
-            env_key: Some(env_key.clone()),
-            model: model.clone(),
-            reasoning_effort: None,
-            enabled: true,
+        // Load the AnyCLI config
+        let mut anycli_config = match AnycliConfig::load() {
+            Ok(c) => c,
+            Err(e) => {
+                self.chat_widget
+                    .add_error_message(format!("Failed to load AnyCLI config: {e}"));
+                return;
+            }
         };
 
-        // Add to config and set as active
-        anycli_config.configs.insert(config_name.clone(), entry);
-        anycli_config.active_config = config_name.clone();
-
-        // Save the config
+        // Update the agent mode
+        anycli_config.agent_mode = mode;
         if let Err(e) = anycli_config.save() {
             self.chat_widget
-                .add_error_message(format!("Failed to save AnyCLI config: {}", e));
+                .add_error_message(format!("Failed to save AnyCLI config: {e}"));
             return;
         }
 
-        // Update the model in our config
-        self.config.model = model.clone();
+        // Show success message
+        let mode_name = match mode {
+            AgentMode::Classic => "Classic Agent",
+            AgentMode::Alloy => "Alloy Agent",
+        };
+        self.chat_widget
+            .add_info_message(format!("Switched to {mode_name}"), None);
+    }
 
-        // Update the model in the chat widget
-        let model_family = self
-            .server
-            .get_models_manager()
-            .construct_model_family(&model, &self.config)
-            .await;
-        self.chat_widget.set_model(&model, model_family);
+    async fn on_save_alloy_config(&mut self, analyze_config: String, implement_config: String) {
+        use codex_core::anycli::config::AgentMode;
+        use codex_core::anycli::config::AnycliConfig;
+
+        // Load the AnyCLI config
+        let mut anycli_config = match AnycliConfig::load() {
+            Ok(c) => c,
+            Err(e) => {
+                self.chat_widget
+                    .add_error_message(format!("Failed to load AnyCLI config: {e}"));
+                return;
+            }
+        };
+
+        // Update the Alloy configuration
+        anycli_config.alloy.analyze_config = Some(analyze_config.clone());
+        anycli_config.alloy.implement_config = Some(implement_config.clone());
+        anycli_config.agent_mode = AgentMode::Alloy;
+
+        if let Err(e) = anycli_config.save() {
+            self.chat_widget
+                .add_error_message(format!("Failed to save AnyCLI config: {e}"));
+            return;
+        }
+
+        // Get display info for the models
+        let analyze_display = anycli_config
+            .configs
+            .get(&analyze_config)
+            .map(|e| format!("{} - {}", e.provider_type.display_name(), e.model))
+            .unwrap_or_else(|| analyze_config.clone());
+
+        let implement_display = anycli_config
+            .configs
+            .get(&implement_config)
+            .map(|e| format!("{} - {}", e.provider_type.display_name(), e.model))
+            .unwrap_or_else(|| implement_config.clone());
 
         // Show success message
-        let provider_name = match provider {
-            codex_core::anycli::config::ProviderType::OpenAI => "OpenAI",
-            codex_core::anycli::config::ProviderType::Anthropic => "Anthropic",
-            codex_core::anycli::config::ProviderType::Google => "Google",
-            codex_core::anycli::config::ProviderType::NewAPI => "New-API",
-        };
         self.chat_widget.add_info_message(
             format!(
-                "Created and activated '{}' ({} - {})\nMake sure ${} is set in your environment.",
-                config_name, provider_name, model, env_key
+                "Alloy Agent configured:\n  Analyze: {analyze_display}\n  Implement: {implement_display}"
             ),
             None,
         );
@@ -1217,6 +1227,7 @@ impl App {
         api_key: String,
         endpoint: Option<String>,
         model: String,
+        use_account_auth: bool,
     ) {
         use codex_core::anycli;
         use codex_core::anycli::config::AnycliConfig;
@@ -1225,7 +1236,7 @@ impl App {
         // Ensure the AnyCLI directory exists
         if let Err(e) = anycli::ensure_anycli_dir() {
             self.chat_widget
-                .add_error_message(format!("Failed to create AnyCLI config directory: {}", e));
+                .add_error_message(format!("Failed to create AnyCLI config directory: {e}"));
             return;
         }
 
@@ -1237,45 +1248,52 @@ impl App {
         let mut counter = 1;
         while anycli_config.configs.contains_key(&config_name) {
             counter += 1;
-            config_name = format!("{}-{}", base_config_name, counter);
+            config_name = format!("{base_config_name}-{counter}");
         }
 
-        // Create the new entry with the API key stored directly
-        // For security, we store the API key in a separate file and reference it
-        let api_key_file =
-            anycli::anycli_config_dir().map(|d| d.join(format!("{}.key", config_name)));
-
-        let env_key = if let Some(ref key_file) = api_key_file {
-            // Write API key to a secure file
-            if let Err(e) = std::fs::write(key_file, &api_key) {
-                self.chat_widget
-                    .add_error_message(format!("Failed to save API key: {}", e));
-                return;
-            }
-            // Set restrictive permissions on the key file (Unix only)
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                if let Err(e) =
-                    std::fs::set_permissions(key_file, std::fs::Permissions::from_mode(0o600))
-                {
-                    tracing::warn!("Failed to set permissions on key file: {}", e);
-                }
-            }
-            // Use a special marker to indicate file-based key
-            Some(format!("file:{}", key_file.display()))
+        // For account auth, we don't need an API key file
+        let env_key = if use_account_auth {
+            None // No env_key needed for account auth
         } else {
-            None
+            // Create the new entry with the API key stored directly
+            // For security, we store the API key in a separate file and reference it
+            let api_key_file =
+                anycli::anycli_config_dir().map(|d| d.join(format!("{config_name}.key")));
+
+            if let Some(ref key_file) = api_key_file {
+                // Write API key to a secure file
+                if let Err(e) = std::fs::write(key_file, &api_key) {
+                    self.chat_widget
+                        .add_error_message(format!("Failed to save API key: {e}"));
+                    return;
+                }
+                // Set restrictive permissions on the key file (Unix only)
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    if let Err(e) =
+                        std::fs::set_permissions(key_file, std::fs::Permissions::from_mode(0o600))
+                    {
+                        tracing::warn!("Failed to set permissions on key file: {}", e);
+                    }
+                }
+                // Use a special marker to indicate file-based key
+                Some(format!("file:{}", key_file.display()))
+            } else {
+                None
+            }
         };
 
         // Create the new entry
         let entry = ConfigEntry {
-            provider_type: provider.clone(),
+            provider_type: provider,
             endpoint,
             env_key,
             model: model.clone(),
             reasoning_effort: None,
             enabled: true,
+            use_account_auth,
+            wire_api: None,
         };
 
         // Add to config and set as active
@@ -1285,7 +1303,7 @@ impl App {
         // Save the config
         if let Err(e) = anycli_config.save() {
             self.chat_widget
-                .add_error_message(format!("Failed to save AnyCLI config: {}", e));
+                .add_error_message(format!("Failed to save AnyCLI config: {e}"));
             return;
         }
 
@@ -1307,12 +1325,92 @@ impl App {
             codex_core::anycli::config::ProviderType::Google => "Google",
             codex_core::anycli::config::ProviderType::NewAPI => "New-API",
         };
+        let auth_info = if use_account_auth {
+            "Using ChatGPT account authentication."
+        } else {
+            "API key saved securely."
+        };
         self.chat_widget.add_info_message(
             format!(
-                "Created and activated '{}' ({} - {})\nAPI key saved securely.",
-                config_name, provider_name, model
+                "Created and activated '{config_name}' ({provider_name} - {model})\n{auth_info}"
             ),
             None,
+        );
+    }
+
+    /// Start ChatGPT login flow for creating a new OpenAI config.
+    fn start_chatgpt_config_login(&mut self, config_name: String) {
+        // Show "authenticating" message
+        self.chat_widget.add_info_message(
+            "Starting ChatGPT authentication...\nA browser window will open for you to sign in."
+                .to_string(),
+            None,
+        );
+
+        let opts = ServerOptions::new(
+            self.config.codex_home.clone(),
+            CLIENT_ID.to_string(),
+            None, // No forced workspace ID
+            self.config.cli_auth_credentials_store_mode,
+        );
+
+        match run_login_server(opts) {
+            Ok(child) => {
+                let auth_url = child.auth_url.clone();
+                let app_event_tx = self.app_event_tx.clone();
+                let auth_manager = self.auth_manager.clone();
+                let config_name_clone = config_name;
+
+                // Show the auth URL in the chat
+                self.chat_widget.add_info_message(
+                    format!("If the browser doesn't open automatically, visit:\n{auth_url}"),
+                    None,
+                );
+
+                // Spawn a task to wait for login completion
+                tokio::spawn(async move {
+                    match child.block_until_done().await {
+                        Ok(()) => {
+                            // Force the auth manager to reload the new auth information
+                            auth_manager.reload();
+                            // Send event to continue with model selection
+                            app_event_tx.send(AppEvent::ChatGPTConfigLoginComplete {
+                                config_name: config_name_clone,
+                            });
+                        }
+                        Err(e) => {
+                            tracing::error!("ChatGPT login failed: {}", e);
+                            // Can't easily show error in UI from here, but the user
+                            // can try again via /config
+                        }
+                    }
+                });
+            }
+            Err(e) => {
+                self.chat_widget.add_error_message(format!(
+                    "Failed to start ChatGPT authentication: {e}\nPlease try again with /config."
+                ));
+            }
+        }
+    }
+
+    /// Handle successful ChatGPT login for config creation - opens model selection.
+    fn on_chatgpt_config_login_complete(&mut self, config_name: String) {
+        use codex_core::anycli::config::ProviderType;
+
+        self.chat_widget.add_info_message(
+            "ChatGPT authentication successful!\nNow select a model for this configuration."
+                .to_string(),
+            None,
+        );
+
+        // Open model selection with use_account_auth=true
+        self.chat_widget.open_config_model_select_with_key(
+            ProviderType::OpenAI,
+            config_name,
+            String::new(), // No API key for account auth
+            None,          // No custom endpoint for ChatGPT account
+            true,          // use_account_auth
         );
     }
 

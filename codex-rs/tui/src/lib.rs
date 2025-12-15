@@ -79,8 +79,8 @@ mod tooltips;
 mod tui;
 mod ui_consts;
 pub mod update_action;
-mod update_prompt;
-mod updates;
+// mod update_prompt;  // Removed: update checker disabled
+// mod updates;        // Removed: update checker disabled
 mod version;
 
 mod wrapping;
@@ -361,25 +361,7 @@ async fn run_ratatui_app(
 
     let mut tui = Tui::new(terminal);
 
-    #[cfg(not(debug_assertions))]
-    {
-        use crate::update_prompt::UpdatePromptOutcome;
-
-        let skip_update_prompt = cli.prompt.as_ref().is_some_and(|prompt| !prompt.is_empty());
-        if !skip_update_prompt {
-            match update_prompt::run_update_prompt_if_needed(&mut tui, &initial_config).await? {
-                UpdatePromptOutcome::Continue => {}
-                UpdatePromptOutcome::RunUpdate(action) => {
-                    crate::tui::restore()?;
-                    return Ok(AppExitInfo {
-                        token_usage: codex_core::protocol::TokenUsage::default(),
-                        conversation_id: None,
-                        update_action: Some(action),
-                    });
-                }
-            }
-        }
-    }
+    // Update checker disabled for AnyCLI fork
 
     // Initialize high-fidelity session event logging if enabled.
     session_log::maybe_init(&initial_config);
