@@ -1,4 +1,4 @@
-<p align="center"><code>npm i -g @unifylm/anycli</code><br />or <code>brew install --cask codex</code></p>
+<p align="center"><code>npm i -g @unifylm/anycli</code><br /></code></p>
 
 <p align="center"><strong>AnyCLI</strong> is a revolutionary coding agent based on OpenAI Codex that runs locally on your computer.
   
